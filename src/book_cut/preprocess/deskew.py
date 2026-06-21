@@ -7,6 +7,8 @@
 
 v1.5+ A1：``deskew_from_array`` 私有变体接受 ndarray，pipeline 跳过重复 ``convert("L")``。
 旋转用 cv2.warpAffine（替代 PIL.rotate），行为等价：``expand=True`` + 白底。
+v1.6+ A5：projection 法先 ``downsample`` 大图到 short 边 = 1000，warpAffine
+省 16×（4000² → 1000²）。投影只关心 row sum 形状，不需像素精度。
 """
 
 from __future__ import annotations
@@ -107,13 +109,35 @@ def _binarize_for_projection(gray: np.ndarray) -> np.ndarray:
     return b
 
 
-def _detect_angle_projection(gray: np.ndarray, max_angle: float = 5.0) -> float | None:
+def _detect_angle_projection(
+    gray: np.ndarray,
+    max_angle: float = 5.0,
+    downsample: int = 1000,
+) -> float | None:
     """用水平投影方差最大原则找旋转角。
 
     两遍搜索：粗搜 1° 步长 → 精搜 0.1° 步长。
+
+    v1.6+ A5：大图先 ``cv2.resize`` 到 short 边 = ``downsample``（默认 1000），
+    再做 warpAffine + 投影。投影只关心 row sum 形状（文字行结构），不需像素精度。
+    4000² → 1000² 省 16× warpAffine 耗时。
+
+    Args:
+        gray: 灰度 ndarray。
+        max_angle: 搜索的最大角度（度），默认 5°。
+        downsample: 降采样目标 short 边（像素）。``<= 0`` 或 ``>= max(h, w)``
+            时不缩（保留 v1.5 行为）。默认 1000。
     """
     binary = _binarize_for_projection(gray)
     h, w = binary.shape
+
+    # v1.6+ A5：投影精度只需"行结构"，先 downsample 省 16× warpAffine
+    if downsample > 0 and max(h, w) > downsample:
+        scale = downsample / max(h, w)
+        new_w = max(1, int(w * scale))
+        new_h = max(1, int(h * scale))
+        binary = cv2.resize(binary, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        h, w = binary.shape
 
     def score(angle: float) -> float:
         M = cv2.getRotationMatrix2D((w / 2, h / 2), angle, 1.0)

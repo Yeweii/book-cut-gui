@@ -28,7 +28,6 @@ from book_cut.io.exporter import (
 )
 from book_cut.io.loader import (
     PageInfo,
-    first_pdf_in_folder,
     get_pdf_metadata,
     get_pdf_outline,
     iter_pages,
@@ -180,6 +179,10 @@ def _reverse_pair(sub_pages: list) -> list:
 def _resolve_outline_source(input_path: Path) -> tuple[Path | None, bool]:
     """决定 outline / metadata 的来源 PDF。
 
+    v1.6+ A4：单次目录扫描拿到 (first_pdf, count)，替代原来
+    ``first_pdf_in_folder`` + 手动 ``rglob("*.pdf")`` + ``rglob("*.PDF")``
+    三次扫描。
+
     Returns:
         ``(pdf_path, is_folder_multi)``：
         - 单文件 PDF → ``(path, False)``
@@ -189,15 +192,31 @@ def _resolve_outline_source(input_path: Path) -> tuple[Path | None, bool]:
     if input_path.is_file() and input_path.suffix.lower() == ".pdf":
         return input_path, False
     if input_path.is_dir():
-        first = first_pdf_in_folder(input_path)
+        first, count = _first_and_count_pdfs(input_path)
         if first is None:
             return None, False
-        # 判断是不是真的"多 PDF"——>1 才警告
-        all_pdfs = sorted(input_path.rglob("*.pdf")) + sorted(
-            input_path.rglob("*.PDF")
-        )
-        return first, len(all_pdfs) > 1
+        return first, count > 1
     return None, False
+
+
+def _first_and_count_pdfs(folder: Path) -> tuple[Path | None, int]:
+    """v1.6+ A4：单次扫描拿第一个 PDF + 计数（替代 ``first_pdf_in_folder`` + 重复 rglob）。
+
+    用 ``rglob("*")`` + ``_is_pdf`` 过滤，与 ``first_pdf_in_folder`` 行为一致
+    （大小写不敏感地识别 .pdf/.PDF）。
+
+    Args:
+        folder: 目录路径。
+
+    Returns:
+        ``(first_pdf, count)``：空目录时 ``(None, 0)``。
+    """
+    from book_cut.io.loader import _is_pdf
+
+    pdfs = sorted(p for p in folder.rglob("*") if p.is_file() and _is_pdf(p))
+    if not pdfs:
+        return None, 0
+    return pdfs[0], len(pdfs)
 
 
 def _write_pdf_with_outline(
