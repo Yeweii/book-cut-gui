@@ -42,20 +42,38 @@ def test_gutter_split_dimensions(two_page_image):
 
 
 def test_gutter_detects_single_page():
-    """单页扫描（一边几乎全白）应只输出 1 张图。"""
+    """单页扫描（一边是扫描台/校色卡，色值非纸白色）应只输出 1 张图。"""
     import numpy as np
     from PIL import Image
 
     from book_cut.split.gutter import split_gutter
 
-    # 800x500：左边全白，右边有墨迹
-    arr = np.full((500, 800, 3), 255, dtype=np.uint8)
+    # 800x500：左边灰色扫描台（mean=180，非纸色），右边有墨迹
+    arr = np.full((500, 800, 3), 180, dtype=np.uint8)
     arr[100:400, 500:780] = 0
     img = Image.fromarray(arr)
 
     pages = split_gutter(img)
     assert len(pages) == 1
     assert pages[0].size == img.size
+
+
+def test_gutter_cover_not_detected_as_single():
+    """封面/封底场景：一边是白衬纸（mean=255），另一边有浓墨。
+    这是双页跨页扫描，不应被判为单页。"""
+    import numpy as np
+    from PIL import Image
+
+    from book_cut.split.gutter import split_gutter
+
+    # 800x500：左白衬纸，右浓墨（红色封面模拟）
+    arr = np.full((500, 800, 3), 255, dtype=np.uint8)
+    arr[10:490, 420:780] = 60  # 右半浓墨
+    img = Image.fromarray(arr)
+
+    pages = split_gutter(img)
+    assert len(pages) == 2  # 跨页，不被吞
+    assert pages[0].size[0] + pages[1].size[0] == 800
 
 
 def test_gutter_can_disable_single_page_detection():
@@ -65,7 +83,7 @@ def test_gutter_can_disable_single_page_detection():
 
     from book_cut.split.gutter import split_gutter
 
-    arr = np.full((500, 800, 3), 255, dtype=np.uint8)
+    arr = np.full((500, 800, 3), 180, dtype=np.uint8)  # 灰台
     arr[100:400, 500:780] = 0
     img = Image.fromarray(arr)
 
@@ -86,10 +104,15 @@ def test_is_single_page_helper():
     arr[20:80, 110:180] = 0
     assert not is_single_page(Image.fromarray(arr), gutter_x=100)
 
-    # 白底 + 只有左侧有墨迹（单页）
-    arr2 = np.full((100, 200, 3), 255, dtype=np.uint8)
-    arr2[20:80, 20:90] = 0
+    # 灰台 + 只有右侧有墨迹（真单页扫描）→ 单页
+    arr2 = np.full((100, 200, 3), 180, dtype=np.uint8)  # 灰扫描台
+    arr2[20:80, 110:180] = 0
     assert is_single_page(Image.fromarray(arr2), gutter_x=100)
+
+    # 白衬纸 + 右侧有墨迹（封面/衬页场景）→ 双页
+    arr3 = np.full((100, 200, 3), 255, dtype=np.uint8)  # 白衬纸
+    arr3[10:90, 110:190] = 0
+    assert not is_single_page(Image.fromarray(arr3), gutter_x=100)
 
 
 def test_border_finds_outer_rect(two_page_image_with_border):
