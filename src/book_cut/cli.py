@@ -21,7 +21,8 @@ def build_parser() -> argparse.ArgumentParser:
         "--split",
         choices=["half", "gutter", "border"],
         default="gutter",
-        help="切分策略：half=对半 / gutter=中缝（默认）/ border=版框线",
+        help="切分策略：half=对半（**要求扫描严格居中**；不确定时请用 gutter） / "
+        "gutter=中缝（默认）/ border=版框线",
     )
     parser.add_argument(
         "--no-single-page",
@@ -60,6 +61,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="per-page paper color override 触发阈值（仅 --crop-adaptive auto 时生效；默认 30）。"
         "某子图 p95 偏离书级超过此值时，单页改用 per-page paper color（只换 ink_thr，padding 不变）。"
         "0=全 per-page；999=永不 override（等同 v1.3 行为）。",
+    )
+    parser.add_argument(
+        "--no-morph",
+        action="store_true",
+        help="关闭 trim 阶段的形态学开运算（v1.6+）。古籍飞白 / 6pt 注疏等极小字"
+        "（1-2 px 笔画）会被形态学当尘点吃掉；遇到此场景用 --no-morph 保留。"
+        "默认开（抗 1-3 px 尘点 / 折痕）。",
     )
     parser.add_argument(
         "--binarize",

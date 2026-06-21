@@ -9,12 +9,18 @@
   ``config.min_edge_ink`` 作边缘"有内容"判定（默认 3 px，杀单像素 JPEG 噪声）。
 
 v1.5+ A1：``_trim_margins_from_array`` 私有变体接受 ndarray，pipeline 用它避免重复 ``convert("L")``。
+v1.6+ B线：
+- **MORPH_OPEN 抗尘点**：``cv2.morphologyEx(MORPH_OPEN, 3x3)`` 清 1-3 px 孤立点
+- **safety margin 贴边保护**：内容距图边 < ``max(5, min(h,w)*0.01)`` → 不裁
+- **min_ink 统一**：legacy `1` → `≥ 3`（与 adaptive 对齐），杀 JPEG 噪声
+- **CLI opt-out**：``--no-morph`` 关闭形态学（古籍飞白/极小字可见时用）
 """
 
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import cv2
 import numpy as np
 from PIL import Image
 
@@ -27,17 +33,58 @@ def _to_L_image(arr_u8: np.ndarray) -> Image.Image:
     return Image.fromarray(arr_u8, mode="L")
 
 
+def _safety_margin(h: int, w: int) -> int:
+    """v1.6+ B线：贴边保护阈值。
+
+    公式：``max(5, int(min(h, w) * 0.01))``。
+    - 4000×4000 → 40px
+    - 500×500 → 5px (floor)
+
+    短边 < 500px 时退化到 5px（floor）。
+    """
+    return max(5, int(min(h, w) * 0.01))
+
+
+def _clean_ink_mask(ink_mask: np.ndarray, use_morph: bool) -> np.ndarray:
+    """v1.6+ B线：形态学开运算抗尘点（1-3 px 孤立点）。
+
+    3×3 开运算效果：
+    - 1 像素孤立点 → 清除
+    - 2 像素短线段 → 清除
+    - 3×3 实心块 → 保留
+    - 文字笔画（≥ 4 像素宽）→ 保留
+
+    Args:
+        ink_mask: 灰度图转出的二值 mask（bool 或 uint8）。
+        use_morph: True 走 MORPH_OPEN；False 跳过（古籍飞白/极小字可见）。
+
+    Returns:
+        清理后的 mask（bool，与输入 dtype 无关）。
+    """
+    if not use_morph:
+        return ink_mask.astype(bool)
+    mask_u8 = ink_mask.astype(np.uint8)
+    cleaned = cv2.morphologyEx(mask_u8, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
+    return cleaned.astype(bool)
+
+
 def _trim_margins_from_array(
     arr: np.ndarray,
     *,
     config: CropConfig | None = None,
     threshold: int | None = None,
     padding: int | None = None,
+    use_morph: bool = True,
 ) -> Image.Image:
     """trim 核心逻辑（v1.5+ A1：接受 ndarray，返回 Image）。
 
     公共函数 ``trim_margins`` 的薄包装去掉后，逻辑全在这里。
     pipeline 在主循环一次 ``convert("L")`` 后直接调本函数，跳过重复转换。
+
+    v1.6+ 改动：
+    - 加 ``use_morph`` 参数控制形态学开运算（默认 True）
+    - 加 safety margin 检查：内容贴图边 → 不裁
+    - 统一 ``min_ink ≥ 3``（legacy 1→3，杀 JPEG 噪声）
     """
     h, w = arr.shape
 
@@ -45,21 +92,19 @@ def _trim_margins_from_array(
     if config is not None:
         ink_thr = config.ink_threshold
         pad = config.padding if config.padding is not None else _default_adaptive_padding(h, w)
-        min_ink = max(1, config.min_edge_ink)
+        # v1.6+：min_ink 统一 ≥ 3（adaptive 默认即 3，防御性 max 保留）
+        min_ink = max(3, config.min_edge_ink)
     else:
         ink_thr = threshold if threshold is not None else 240
         pad = padding if padding is not None else 10
-        # legacy 模式 = "任一非白像素" = sum >= 1
-        min_ink = 1
+        # v1.6+：legacy 与 adaptive 对齐，min_ink ≥ 3（杀 JPEG 噪声 / 单像素尘点）
+        min_ink = 3
 
     ink_mask = arr < ink_thr
-    if min_ink <= 1:
-        # 快速路径：legacy 行为
-        row_has_content = ink_mask.any(axis=1)
-        col_has_content = ink_mask.any(axis=0)
-    else:
-        row_has_content = ink_mask.sum(axis=1) >= min_ink
-        col_has_content = ink_mask.sum(axis=0) >= min_ink
+    ink_mask = _clean_ink_mask(ink_mask, use_morph=use_morph)
+
+    row_has_content = ink_mask.sum(axis=1) >= min_ink
+    col_has_content = ink_mask.sum(axis=0) >= min_ink
 
     rows_idx = np.where(row_has_content)[0]
     cols_idx = np.where(col_has_content)[0]
@@ -72,6 +117,11 @@ def _trim_margins_from_array(
     bottom = int(rows_idx[-1])
     left = int(cols_idx[0])
     right = int(cols_idx[-1])
+
+    # v1.6+ B线：safety margin 检查 —— 内容贴边 → 不裁
+    safety = _safety_margin(h, w)
+    if (top < safety or bottom > h - safety - 1 or left < safety or right > w - safety - 1):
+        return _to_L_image(arr)
 
     # 应用 padding（不超出原图）
     top = max(0, top - pad)
@@ -91,12 +141,14 @@ def trim_margins(
     threshold: int | None = None,
     padding: int | None = None,
     config: CropConfig | None = None,
+    use_morph: bool = True,
 ) -> Image.Image:
     """去掉图片四周的白边。
 
     策略：扫描每行/列，把"有内容"行/列的首末位置作为裁切边界，外加 padding。
 
     v1.5+ A1：薄包装，convert("L") 后调 ``_trim_margins_from_array``。
+    v1.6+ 加 ``use_morph`` 参数（默认 True），CLI ``--no-morph`` 关闭形态学。
 
     Args:
         image: 输入图像。
@@ -105,6 +157,8 @@ def trim_margins(
         padding: 保留的最小边距（像素，legacy）。缺省 = 10。
             ``config`` 不为 None 时忽略（用 config.padding / 自适应）。
         config: 自适应裁切配置。``None`` = legacy 模式。
+        use_morph: 是否走形态学开运算（v1.6+ B线，默认 True）。
+            关闭后保留 1-3 px 飞白/极小字，但失去抗尘点能力。
 
     Returns:
         裁切后的图像。
@@ -115,7 +169,7 @@ def trim_margins(
         gray = image
     arr = np.asarray(gray)
     return _trim_margins_from_array(
-        arr, config=config, threshold=threshold, padding=padding
+        arr, config=config, threshold=threshold, padding=padding, use_morph=use_morph
     )
 
 

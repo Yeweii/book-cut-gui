@@ -17,24 +17,31 @@ from book_cut.detect.trim import trim_margins
 
 
 def _page_with_white_margins() -> Image.Image:
-    """合成一张 600x400 的单页：白边 + 黑边框 + 文字。"""
+    """合成一张 600x400 的单页：白边 + 黑边框 + 文字。
+
+    v1.6+：文字 width=3（≥4px 才稳过 MORPH_OPEN；2px 会被形态学当尘点吃掉）。
+    """
     img = Image.new("RGB", (600, 400), "white")
     draw = ImageDraw.Draw(img)
     # 版框 (80,60) - (520,340)
     draw.rectangle([(80, 60), (520, 340)], outline="black", width=3)
     # 文字行
     for y in range(80, 320, 30):
-        draw.line([(100, y), (500, y)], fill="black", width=2)
+        draw.line([(100, y), (500, y)], fill="black", width=3)
     return img
 
 
 def _page_with_heavy_white_margins() -> Image.Image:
-    """四周有明显白边的图。"""
+    """四周有明显白边的图。
+
+    v1.6+：笔画 width=3（≥4px 才稳过 MORPH_OPEN；2px 会被形态学当尘点吃掉，
+    见 ``docs/dev/2026-06-21-split-crop-robustness.md`` §5.2）。
+    """
     img = Image.new("RGB", (400, 300), "white")
     draw = ImageDraw.Draw(img)
     # 内容集中在中间 200x150
     for y in range(80, 220, 25):
-        draw.line([(100, y), (300, y)], fill="black", width=2)
+        draw.line([(100, y), (300, y)], fill="black", width=3)
     return img
 
 
@@ -349,7 +356,7 @@ def test_border_fallback_when_no_lines_detected():
     # 加一点纯文字避免 trim 也跑出空（trim 走 paper-color-based 检测）
     draw = ImageDraw.Draw(img)
     for y in range(80, 320, 30):
-        draw.line([(100, y), (500, y)], fill="black", width=2)
+        draw.line([(100, y), (500, y)], fill="black", width=3)  # v1.6+ width≥3 稳过 MORPH_OPEN
 
     out = crop_to_border(img, padding=2)
     # border 检测不到 → fallback trim → 输出比原图小（裁到内容）

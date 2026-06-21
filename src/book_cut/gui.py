@@ -181,6 +181,14 @@ def run_gui() -> None:
     ttk.Label(crop_frame, text="采样页:").grid(row=0, column=5)
     paper_pages_spin.grid(row=0, column=6, padx=(0, 4))
 
+    # v1.6+ B线：抗杂质（默认开，对应 CLI ``--no-morph`` 反义）
+    morph_var = tk.BooleanVar(value=True)
+    ttk.Checkbutton(
+        crop_frame,
+        text="抗杂质（形态学清尘点）",
+        variable=morph_var,
+    ).grid(row=1, column=0, columnspan=4, sticky="w", padx=(0, 4), pady=(4, 0))
+
     # 二值化
     ttk.Label(root, text="二值化:").grid(row=6, column=0, sticky="e", **pad)
     bin_frame = ttk.Frame(root)
@@ -258,6 +266,7 @@ def run_gui() -> None:
             "deskew": deskew_var.get(),
             "page_order": PAGE_ORDER_MAP[order_var.get()],
             "outline": outline_var.get(),
+            "no_morph": not morph_var.get(),
         }
         t = threading.Thread(
             target=_run_pipeline_thread,

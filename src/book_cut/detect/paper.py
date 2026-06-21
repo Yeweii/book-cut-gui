@@ -6,6 +6,7 @@
 - ``aggregate_paper_color``：多页 → 书级 paper color（median）
 - ``adaptive_padding``：按图像尺寸比例算 padding
 - ``default_crop_config``：工厂函数
+- ``_column_is_white``（v1.6+）：列白度双判据，gutter 抗伤字用
 
 设计要点：
 - **95th percentile** 比 median 抗浓墨（cover 50% 浓墨仍返 255）；比 Otsu 简单。
@@ -94,6 +95,38 @@ def should_override(per_paper: float, book_paper: float, threshold: float = 30.0
         True → 此页用 per-page config；False → 用书级 config。
     """
     return abs(per_paper - book_paper) >= threshold
+
+
+def _column_is_white(
+    col_arr: np.ndarray,
+    min_p95: float = 230.0,
+    min_mean: float = 220.0,
+) -> bool:
+    """v1.6+ gutter 抗伤字用：单列是否"白"，p95 + mean 双判据。
+
+    字符列 vs 白列的灰度特征（典型古籍扫描）：
+
+    | 列类型 | mean | p95 | 判据 (p95≥230 AND mean≥220) |
+    |--------|------|-----|----|
+    | 纯白（真中缝） | 250 | 255 | ✓ |
+    | 稀疏字符（每列 1-2 暗像素） | 215 | 180 | ✗ ← 救回来 |
+    | 浓密字符 | 100 | 200 | ✗ |
+
+    **p95 ≥ 230 是关键判据**：白列最暗的 5% 像素仍 ≥ 230（白纸），
+    稀疏文字列最暗 5% 像素 < 200（被字符拉低）。
+
+    Args:
+        col_arr: 单列灰度 ndarray（任意 dtype，会转 float 算 mean）。
+        min_p95: p95 阈值（默认 230）。
+        min_mean: mean 阈值（默认 220，与 v1.3 ``min_white_value`` 对齐）。
+
+    Returns:
+        True → 该列视为"白"列。
+    """
+    f = col_arr.astype(np.float32)
+    p95 = float(np.percentile(f, 95))
+    mean = float(f.mean())
+    return p95 >= min_p95 and mean >= min_mean
 
 
 def aggregate_paper_color(colors: list[float]) -> float:

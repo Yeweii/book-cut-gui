@@ -51,7 +51,12 @@ def _split_from_array(arr: np.ndarray, strategy: str, auto_single_page: bool = T
     raise ValueError(f"未知切分策略: {strategy}")
 
 
-def _crop_pages_from_arrays(sub_arrs: list, mode: str, configs: list | None = None) -> list:
+def _crop_pages_from_arrays(
+    sub_arrs: list,
+    mode: str,
+    configs: list | None = None,
+    use_morph: bool = True,
+) -> list:
     """v1.5+ A1：对 arr 列表裁切，每张裁成 Image（v1.5+ per-page override）。
 
     Args:
@@ -59,6 +64,7 @@ def _crop_pages_from_arrays(sub_arrs: list, mode: str, configs: list | None = No
         mode: ``trim`` / ``border``。
         configs: 每张子图对应的 ``CropConfig``（可 ``None`` = legacy 默认）。
             ``None`` → 全部子图用同一个 ``config``（向后兼容）。
+        use_morph: v1.6+ B线：trim/border fallback 是否走形态学开运算。
 
     说明：per-page override 让每张子图独立决策 config（详见
     ``_resolve_per_page_config``）。本函数只做"按 configs 列表逐张裁切"。
@@ -66,26 +72,26 @@ def _crop_pages_from_arrays(sub_arrs: list, mode: str, configs: list | None = No
 
     if configs is None:
         # 向后兼容：所有子图用同一 config
-        return _crop_pages_from_arrays_with_config(sub_arrs, mode, None)
+        return _crop_pages_from_arrays_with_config(sub_arrs, mode, None, use_morph=use_morph)
     if len(configs) != len(sub_arrs):
         raise ValueError(f"configs 长度 {len(configs)} ≠ sub_arrs 长度 {len(sub_arrs)}")
     out: list = []
     for a, c in zip(sub_arrs, configs, strict=True):
-        out.extend(_crop_pages_from_arrays_with_config([a], mode, c))
+        out.extend(_crop_pages_from_arrays_with_config([a], mode, c, use_morph=use_morph))
     return out
 
 
 def _crop_pages_from_arrays_with_config(
-    sub_arrs: list, mode: str, config
+    sub_arrs: list, mode: str, config, use_morph: bool = True
 ) -> list:
-    """``_crop_pages_from_arrays`` 的内部单 config helper。"""
+    """``_crop_pages_from_arrays`` 的内部单 config helper（v1.6+ 加 ``use_morph``）。"""
     from book_cut.detect.border import crop_to_border_from_array
     from book_cut.detect.trim import _trim_margins_from_array
 
     if mode == "trim":
-        return [_trim_margins_from_array(a, config=config) for a in sub_arrs]
+        return [_trim_margins_from_array(a, config=config, use_morph=use_morph) for a in sub_arrs]
     if mode == "border":
-        return [crop_to_border_from_array(a, config=config) for a in sub_arrs]
+        return [crop_to_border_from_array(a, config=config, use_morph=use_morph) for a in sub_arrs]
     raise ValueError(f"未知裁切模式: {mode}")
 
 
@@ -243,6 +249,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
     auto_single_page: bool = getattr(args, "auto_single_page", True)
     page_order: str = getattr(args, "page_order", "ltr")  # v1.4 新增
     outline_enabled: bool = getattr(args, "outline", True)  # v1.4 新增
+    # v1.6+ B线：--no-morph 关闭形态学（古籍飞白/极小字可见时用）
+    use_morph: bool = not getattr(args, "no_morph", False)
     book_name = input_path.stem if input_path.is_file() else input_path.name
 
     # v1.5+ B1：流式 iterator（不再 list 物化整本书）
@@ -331,19 +339,24 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
         # 3. 可选：裁切（白边 / 版框内裁）—— arr 路径
         # v1.5+ per-page override：每张子图独立决策 config
+        # v1.6+ B线：use_morph 控制形态学（--no-morph 关闭）
         if crop_mode == "none":
             sub_pages = [Image.fromarray(a, mode="L") for a in sub_arrs]
         elif is_sampled_page:
             # 采样页：用书级 config（避免 override 自我引用，proposal §10.2）
             configs = [crop_config] * len(sub_arrs)
-            sub_pages = _crop_pages_from_arrays(sub_arrs, crop_mode, configs=configs)
+            sub_pages = _crop_pages_from_arrays(
+                sub_arrs, crop_mode, configs=configs, use_morph=use_morph
+            )
         else:
             # 每张子图独立决策（per-page override）
             per_page_configs = [
                 _resolve_per_page_config(a, crop_config, paper_deviation)
                 for a in sub_arrs
             ]
-            sub_pages = _crop_pages_from_arrays(sub_arrs, crop_mode, configs=per_page_configs)
+            sub_pages = _crop_pages_from_arrays(
+                sub_arrs, crop_mode, configs=per_page_configs, use_morph=use_morph
+            )
 
         # 4. 可选：二值化 —— 公共 API（内部薄包装对 L 模式图无 convert 开销）
         if binarize_method != "none":
