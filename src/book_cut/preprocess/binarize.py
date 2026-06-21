@@ -2,9 +2,39 @@
 
 from __future__ import annotations
 
+import os
+import platform
+
 import cv2
 import numpy as np
 from PIL import Image
+
+# v1.5+ A2：Sauvola 局部均方的后端选择
+# OpenCV 在 arm64 NEON 上对 boxFilter 优化更好（multiply + filter 两次 SIMD pass），
+# sqrBoxFilter 在 x86_64 AVX 上更快（fused squaring 一次 pass）。
+# 实测（macOS arm64，2026-06-21）：4000×4000 Sauvola
+#   boxFilter(arr*arr)  : 61.7-61.8ms ✓
+#   sqrBoxFilter(arr)   : 78.8-110.0ms ✗
+# 平台默认 + 环境变量 ``BOOKCUT_BINARIZE`` 覆盖（值：``sqrbox`` / ``box``）。
+_X86_ARCHES = frozenset({"x86_64", "AMD64", "i386", "i686", "x86"})
+_DEFAULT_USE_SQRBOX = platform.machine() in _X86_ARCHES
+_USE_SQRBOX = (
+    os.environ.get("BOOKCUT_BINARIZE", "sqrbox" if _DEFAULT_USE_SQRBOX else "box").lower()
+    == "sqrbox"
+)
+
+
+def _local_mean_sq(arr: np.ndarray, ksize: tuple[int, int]) -> np.ndarray:
+    """局部均方（v1.5+ A2 后端选择）。
+
+    x86_64 → ``cv2.sqrBoxFilter``（fused，无临时数组）
+    arm64/其他 → ``cv2.boxFilter(arr * arr)``（multiply 后 filter，NEON 优化更佳）
+
+    可用 ``BOOKCUT_BINARIZE=sqrbox|box`` 覆盖默认。
+    """
+    if _USE_SQRBOX:
+        return cv2.sqrBoxFilter(arr, -1, ksize)
+    return cv2.boxFilter(arr * arr, -1, ksize)
 
 
 def _to_gray_array(image: Image.Image) -> np.ndarray:
@@ -52,6 +82,8 @@ def binarize_sauvola(
 
     对纸张泛黄、不均匀光照等情况效果好。
 
+    后端选择：v1.5+ A2 —— 平台自动 + ``BOOKCUT_BINARIZE`` 环境变量覆盖。
+
     Args:
         image: 输入图像（任意模式）。
         window_size: 局部窗口大小（奇数），默认 25。
@@ -67,8 +99,8 @@ def binarize_sauvola(
 
     # 局部均值
     mean = cv2.boxFilter(arr, -1, ksize)
-    # 局部均方
-    mean_sq = cv2.boxFilter(arr * arr, -1, ksize)
+    # 局部均方（v1.5+ A2：平台后端选择，详见 _local_mean_sq）
+    mean_sq = _local_mean_sq(arr, ksize)
     # 局部标准差（数值稳定化）
     var = np.maximum(mean_sq - mean * mean, 0.0)
     std = np.sqrt(var)

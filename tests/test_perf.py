@@ -23,7 +23,6 @@ from PIL import Image
 
 from book_cut.preprocess.binarize import binarize_sauvola
 
-
 pytestmark = pytest.mark.perf
 
 
@@ -48,8 +47,9 @@ def _synth_double_page(size: int = 2000) -> Image.Image:
 def test_binarize_sauvola_2000_perf():
     """Sauvola 2000×2000 RGB 性能基准。
 
-    v1.3/v1.4 实测 ~10-15ms（cv2.boxFilter × 2 + sqrt + threshold）。
-    A2（sqrBoxFilter）后预期 -5% 耗时 + -16MB 临时数组。
+    平台默认后端（v1.5+ A2 平台后端选择）：
+    - arm64：boxFilter（NEON 优化）~ 15-17ms
+    - x86_64：sqrBoxFilter（AVX fused）~ 15-20ms（推测）
     阈值 500ms 留 30x 余量，仅作退化检测用。
     """
     img = _synth_double_page(2000)
@@ -68,8 +68,9 @@ def test_binarize_sauvola_2000_perf():
 def test_binarize_sauvola_4000_perf():
     """Sauvola 4000×4000 RGB 性能基准（接近真实古籍扫描件尺寸）。
 
-    v1.3/v1.4 实测 ~50-60ms。
-    A1+A2 后预期 -15% 耗时 + -64MB 内存。
+    平台默认后端（v1.5+ A2 平台后端选择）：
+    - arm64：boxFilter（NEON 优化）~ 60-70ms
+    - x86_64：sqrBoxFilter（AVX fused）~ 50-70ms（推测）
     阈值 800ms 留 10x 余量（冷启动 + 大图 = 显著开销）。
     """
     img = _synth_double_page(4000)

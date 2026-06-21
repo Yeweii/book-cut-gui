@@ -69,15 +69,30 @@
 
 ### A2. Sauvola `sqrBoxFilter` 融合
 
-**现状**（`preprocess/binarize.py:71`）：
-```python
-mean_sq = cv2.boxFilter(arr * arr, -1, ksize)  # 物化 64MB 临时
-```
+**状态**：✅ v1.5 已实现（**平台后端选择**，非纯替换）
 
-**改法**（1 行）：
+**原始提案**（`preprocess/binarize.py:71`）：
 ```python
+# 旧
+mean_sq = cv2.boxFilter(arr * arr, -1, ksize)  # 物化 64MB 临时
+
+# 原提案：直接换
 mean_sq = cv2.sqrBoxFilter(arr, -1, ksize)  # 融合
 ```
+
+**实测发现（macOS arm64，2026-06-21）**：sqrBoxFilter 在 arm64 NEON 上**反而慢 27-80%**：
+- boxFilter(arr*arr)  2000×2000 = 15.7-16.8ms / 4000×4000 = 61.3-68.3ms ✓
+- sqrBoxFilter(arr)   2000×2000 = 19.9-21.4ms / 4000×4000 = 79.8-98.3ms ✗
+
+原因推测：OpenCV arm64 NEON 对 `boxFilter` 高度优化（multiply + filter 两次 SIMD pass），`sqrBoxFilter` 无同等优化路径。x86_64 AVX 可能反过来，但 80% 用户在 arm64。
+
+**最终方案（v1.5 落地）**：
+- 平台自动：`platform.machine() in {"x86_64", "AMD64", ...}` → sqrBoxFilter；其他 → boxFilter
+- 环境变量 `BOOKCUT_BINARIZE={sqrbox,box}` 覆盖默认
+- 0 行数性能损失（arm64 默认 box = v1.4 baseline），x86 节省 64MB 内存
+- 3 个 test 验证：`test_backend_default_matches_platform` / `test_backend_env_box_override` / `test_backend_env_sqrbox_override`
+
+**后续**：v1.7 候选 —— x86 实测确认 AVX 优势；如确认则在 x86 上内存节约更显著
 
 **风险**：
 - 浮点精度有微小变化（squared sum vs sqrBoxFilter 内部累加顺序）
