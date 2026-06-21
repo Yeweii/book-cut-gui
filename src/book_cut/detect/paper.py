@@ -62,12 +62,38 @@ def estimate_paper_color(image: Image.Image) -> float:
     else:
         gray = image
     arr = np.asarray(gray)
+    return estimate_paper_color_from_array(arr)
+
+
+def estimate_paper_color_from_array(arr: np.ndarray) -> float:
+    """v1.5+ per-page override 用：接受灰度 ndarray，避免重复 convert("L")。
+
+    与 ``estimate_paper_color`` 同算法（95th percentile + clip [180, 255]），
+    但跳过 PIL Image → ndarray 的转换（A1 流水线已拿到 ndarray）。
+    """
     if arr.size == 0:
         return 255.0
     p95 = float(np.percentile(arr, 95))
     # 真实古籍 paper 范围：180 (重度黄化/灰化) ~ 255 (漂白)。
     # 超出此范围几乎肯定是墨迹或阴影，不是纸色。
     return max(180.0, min(255.0, p95))
+
+
+def should_override(per_paper: float, book_paper: float, threshold: float = 30.0) -> bool:
+    """v1.5+ per-page override 决策：单页 paper 是否偏离书级到需要单独估。
+
+    Args:
+        per_paper: 单页 estimate_paper_color 值。
+        book_paper: 书级 aggregate_paper_color 值。
+        threshold: 偏离容忍阈值（默认 30，与 ink_offset 对齐）。
+            - 30（默认）：偏离 ≥ 30 即 override（古籍常见扉页/衬页偏移量）
+            - 0：强制每页 override（per-page 全开，调试用）
+            - 999：永不 override（等同 v1.3 行为）
+
+    Returns:
+        True → 此页用 per-page config；False → 用书级 config。
+    """
+    return abs(per_paper - book_paper) >= threshold
 
 
 def aggregate_paper_color(colors: list[float]) -> float:

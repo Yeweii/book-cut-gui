@@ -51,8 +51,34 @@ def _split_from_array(arr: np.ndarray, strategy: str, auto_single_page: bool = T
     raise ValueError(f"未知切分策略: {strategy}")
 
 
-def _crop_pages_from_arrays(sub_arrs: list, mode: str, config=None) -> list:
-    """v1.5+ A1：对 arr 列表裁切，每张裁成 Image。"""
+def _crop_pages_from_arrays(sub_arrs: list, mode: str, configs: list | None = None) -> list:
+    """v1.5+ A1：对 arr 列表裁切，每张裁成 Image（v1.5+ per-page override）。
+
+    Args:
+        sub_arrs: 切分后的子图 ndarray 列表。
+        mode: ``trim`` / ``border``。
+        configs: 每张子图对应的 ``CropConfig``（可 ``None`` = legacy 默认）。
+            ``None`` → 全部子图用同一个 ``config``（向后兼容）。
+
+    说明：per-page override 让每张子图独立决策 config（详见
+    ``_resolve_per_page_config``）。本函数只做"按 configs 列表逐张裁切"。
+    """
+
+    if configs is None:
+        # 向后兼容：所有子图用同一 config
+        return _crop_pages_from_arrays_with_config(sub_arrs, mode, None)
+    if len(configs) != len(sub_arrs):
+        raise ValueError(f"configs 长度 {len(configs)} ≠ sub_arrs 长度 {len(sub_arrs)}")
+    out: list = []
+    for a, c in zip(sub_arrs, configs, strict=True):
+        out.extend(_crop_pages_from_arrays_with_config([a], mode, c))
+    return out
+
+
+def _crop_pages_from_arrays_with_config(
+    sub_arrs: list, mode: str, config
+) -> list:
+    """``_crop_pages_from_arrays`` 的内部单 config helper。"""
     from book_cut.detect.border import crop_to_border_from_array
     from book_cut.detect.trim import _trim_margins_from_array
 
@@ -61,6 +87,45 @@ def _crop_pages_from_arrays(sub_arrs: list, mode: str, config=None) -> list:
     if mode == "border":
         return [crop_to_border_from_array(a, config=config) for a in sub_arrs]
     raise ValueError(f"未知裁切模式: {mode}")
+
+
+def _resolve_per_page_config(
+    sub_arr: np.ndarray,
+    book_config,
+    deviation: float,
+) -> object | None:
+    """v1.5+ per-page override 决策：单张子图用书级还是 per-page config。
+
+    Args:
+        sub_arr: 单张子图灰度 ndarray（已切分后）。
+        book_config: 书级 CropConfig（``None`` → 走 legacy，不 override）。
+        deviation: 偏离阈值（``--paper-deviation``，默认 30）。
+
+    Returns:
+        - ``book_config``：不 override（per-paper 接近 book）
+        - 新 ``CropConfig``：override 触发（保持 padding/ink_offset，仅换 paper_color）
+        - ``None``：legacy 模式（与 book_config=None 对齐）
+    """
+    if book_config is None:
+        return None  # legacy fixed 模式：不 override
+    from book_cut.detect.paper import (
+        CropConfig,
+        estimate_paper_color_from_array,
+        should_override,
+    )
+
+    per_paper = estimate_paper_color_from_array(sub_arr)
+    if not should_override(per_paper, book_config.paper_color, threshold=deviation):
+        return book_config  # 偏离 ≤ 阈值：沿用书级
+
+    # override：保持 padding/ink_offset/min_edge_ink，只换 paper_color
+    # v1.5+ §5.1：padding 不变（视觉一致性），仅 ink_thr 切到 per-page
+    return CropConfig(
+        paper_color=per_paper,
+        ink_offset=book_config.ink_offset,
+        padding=book_config.padding,
+        min_edge_ink=book_config.min_edge_ink,
+    )
 
 
 def _build_crop_config(args, sample_pages: list) -> object | None:
@@ -228,8 +293,15 @@ def run_pipeline(args: argparse.Namespace) -> None:
     image_paths: list[Path] = []
     counter = 0
 
-    def _process_one(page: PageInfo) -> None:
-        """处理单页：deskew → split → crop → binarize → save_image."""
+    # v1.5+ per-page override：偏离阈值（CLI --paper-deviation，默认 30）
+    paper_deviation: float = float(getattr(args, "paper_deviation", 30))
+
+    def _process_one(page: PageInfo, is_sampled_page: bool = False) -> None:
+        """处理单页：deskew → split → crop → binarize → save_image.
+
+        v1.5+ per-page override：每张子图独立决定 config（书级 vs per-page）。
+        is_sampled_page=True（采样阶段用过的前 N 页）跳过 override，避免自我引用。
+        """
         nonlocal counter
         image = page.image
 
@@ -258,10 +330,20 @@ def run_pipeline(args: argparse.Namespace) -> None:
             sub_arrs = [sub_arrs[1], sub_arrs[0]]
 
         # 3. 可选：裁切（白边 / 版框内裁）—— arr 路径
+        # v1.5+ per-page override：每张子图独立决策 config
         if crop_mode == "none":
             sub_pages = [Image.fromarray(a, mode="L") for a in sub_arrs]
+        elif is_sampled_page:
+            # 采样页：用书级 config（避免 override 自我引用，proposal §10.2）
+            configs = [crop_config] * len(sub_arrs)
+            sub_pages = _crop_pages_from_arrays(sub_arrs, crop_mode, configs=configs)
         else:
-            sub_pages = _crop_pages_from_arrays(sub_arrs, crop_mode, config=crop_config)
+            # 每张子图独立决策（per-page override）
+            per_page_configs = [
+                _resolve_per_page_config(a, crop_config, paper_deviation)
+                for a in sub_arrs
+            ]
+            sub_pages = _crop_pages_from_arrays(sub_arrs, crop_mode, configs=per_page_configs)
 
         # 4. 可选：二值化 —— 公共 API（内部薄包装对 L 模式图无 convert 开销）
         if binarize_method != "none":
@@ -275,11 +357,14 @@ def run_pipeline(args: argparse.Namespace) -> None:
             counter += 1
             image_paths.append(save_image(p, output_dir, book_name, counter, fmt=fmt))
 
-    _process_one(first_page)
+    # 采样阶段用了前 paper_pages_n 页（islice chain 顺序保证）。
+    # 主循环用 enumerate 区分"采样页"（前 N-1，因为 first_page 已取出）vs 真实页。
+    sampled_remaining = paper_pages_n - 1  # 已取 first_page，剩 N-1 个
+    _process_one(first_page, is_sampled_page=True)
 
     # tqdm 包装剩余 iterator（total 不知道 → 不显示 ETA，但有进度计数）
-    for page in tqdm(full_iter, desc="切分", initial=1):
-        _process_one(page)
+    for i, page in enumerate(tqdm(full_iter, desc="切分", initial=1)):
+        _process_one(page, is_sampled_page=(i < sampled_remaining))
 
     if getattr(args, "pdf", False):
         assert pdf_path_final is not None

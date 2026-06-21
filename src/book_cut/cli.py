@@ -54,6 +54,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="用于学习书级纸张色的采样页数（仅 --crop-adaptive auto 时生效；默认 5）",
     )
     parser.add_argument(
+        "--paper-deviation",
+        type=int,
+        default=30,
+        help="per-page paper color override 触发阈值（仅 --crop-adaptive auto 时生效；默认 30）。"
+        "某子图 p95 偏离书级超过此值时，单页改用 per-page paper color（只换 ink_thr，padding 不变）。"
+        "0=全 per-page；999=永不 override（等同 v1.3 行为）。",
+    )
+    parser.add_argument(
         "--binarize",
         choices=["none", "otsu", "adaptive", "sauvola"],
         default="none",

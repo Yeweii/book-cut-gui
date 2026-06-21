@@ -141,6 +141,161 @@ def test_default_crop_config_factory():
     assert default_crop_config(None).paper_color == 240.0
 
 
+# ----- v1.5+ per-page override -----
+
+
+def test_should_override_at_threshold():
+    """偏离 == 阈值 → 触发 override（>= 边界）。"""
+    from book_cut.detect.paper import should_override
+
+    # 偏离 30 == 阈值 30 → True
+    assert should_override(per_paper=250, book_paper=220, threshold=30) is True
+
+
+def test_should_override_below_threshold():
+    """偏离 < 阈值 → 不 override。"""
+    from book_cut.detect.paper import should_override
+
+    assert should_override(per_paper=245, book_paper=220, threshold=30) is False  # 25 < 30
+
+
+def test_should_override_exact_match():
+    """偏离 0 → 不 override。"""
+    from book_cut.detect.paper import should_override
+
+    assert should_override(per_paper=220, book_paper=220, threshold=30) is False
+
+
+def test_should_override_force_per_page():
+    """threshold=0 → 强制每页 override。"""
+    from book_cut.detect.paper import should_override
+
+    assert should_override(per_paper=180, book_paper=220, threshold=0) is True
+
+
+def test_should_override_disable():
+    """threshold=999 → 永不 override（v1.3 等价行为）。"""
+    from book_cut.detect.paper import should_override
+
+    assert should_override(per_paper=180, book_paper=255, threshold=999) is False
+
+
+def test_estimate_paper_color_from_array():
+    """``estimate_paper_color_from_array`` 跳过 PIL，直接消费 ndarray。"""
+    from book_cut.detect.paper import estimate_paper_color_from_array
+
+    # 灰度 200 的"泛黄"纸
+    arr = np.full((200, 300), 200, dtype=np.uint8)
+    val = estimate_paper_color_from_array(arr)
+    assert 180.0 <= val <= 200.0
+
+    # 纯白
+    arr_white = np.full((100, 100), 255, dtype=np.uint8)
+    assert estimate_paper_color_from_array(arr_white) == 255.0
+
+
+def test_estimate_paper_color_from_array_empty():
+    """空数组 → 255.0 兜底。"""
+    from book_cut.detect.paper import estimate_paper_color_from_array
+
+    arr = np.array([], dtype=np.uint8)
+    assert estimate_paper_color_from_array(arr) == 255.0
+
+
+def test_per_page_override_resolves_correctly(tmp_path):
+    """端到端：构造一个 book 模拟纸色 + 单页异常纸色，验证 override 触发。
+
+    Book paper = 220（采样页都是 220）
+    Page 5 = 180（黄页）→ 偏离 40 ≥ 30 → override 用 per-page config
+    """
+    import argparse
+
+    import pymupdf
+    from PIL import Image
+
+    from book_cut.pipeline import run_pipeline
+
+    # 合成 5 页 PDF：前 4 页纸色 220（白偏黄），第 5 页纸色 180（黄）
+    png_pages = []
+    for i in range(5):
+        # page i+1: 前 4 是 220，page 5 是 180
+        paper = 220 if i < 4 else 180
+        arr = np.full((500, 800), paper, dtype=np.uint8)
+        # 加几条墨迹（避免 trim 失败）
+        arr[100:120, 100:700] = 30
+        img = Image.fromarray(arr, mode="L")
+        from io import BytesIO
+        buf = BytesIO()
+        img.save(buf, format="PNG")
+        png_pages.append(buf.getvalue())
+
+    doc = pymupdf.open()
+    for png in png_pages:
+        page = doc.new_page(width=800, height=500)
+        page.insert_image(page.rect, stream=png)
+    in_pdf = tmp_path / "mixed_paper.pdf"
+    doc.save(str(in_pdf))
+    doc.close()
+
+    out_dir = tmp_path / "out"
+    args = argparse.Namespace(
+        input=str(in_pdf), output=str(out_dir),
+        split="half", crop="trim", binarize="none",
+        deskew=False, auto_single_page=True, page_order="ltr", outline=True,
+        format="png", crop_adaptive="auto", paper_pages=4, paper_deviation=30,
+        half_offset=0, pdf=False,
+    )
+
+    run_pipeline(args)
+    # 5 页 × 2 (half 切) = 10 张
+    out_files = sorted(out_dir.glob("*.png"))
+    assert len(out_files) == 10
+
+
+def test_per_page_override_disabled_at_999():
+    """--paper-deviation 999 → 永不 override（等同 v1.3 行为）。"""
+    import argparse
+    from io import BytesIO
+    from pathlib import Path
+
+    import pymupdf
+    from PIL import Image
+
+    from book_cut.pipeline import run_pipeline
+    arr = np.full((500, 800), 220, dtype=np.uint8)
+    arr[100:120, 100:700] = 30
+    img = Image.fromarray(arr, mode="L")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    png_bytes = buf.getvalue()
+
+    doc = pymupdf.open()
+    for _ in range(3):
+        page = doc.new_page(width=800, height=500)
+        page.insert_image(page.rect, stream=png_bytes)
+    in_pdf = Path("/tmp/zzz_no_override.pdf")
+    doc.save(str(in_pdf))
+    doc.close()
+
+    out_dir = Path("/tmp/zzz_no_override_out")
+    if out_dir.exists():
+        import shutil
+        shutil.rmtree(out_dir)
+    out_dir.mkdir()
+
+    args = argparse.Namespace(
+        input=str(in_pdf), output=str(out_dir),
+        split="half", crop="trim", binarize="none",
+        deskew=False, auto_single_page=True, page_order="ltr", outline=True,
+        format="png", crop_adaptive="auto", paper_pages=2, paper_deviation=999,
+        half_offset=0, pdf=False,
+    )
+
+    run_pipeline(args)
+    out_files = sorted(out_dir.glob("*.png"))
+    assert len(out_files) == 6
+
+
 # ----- trim_margins 自适应模式测试 -----
 
 
