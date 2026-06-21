@@ -21,60 +21,22 @@ def _to_gray_bgr(image: Image.Image) -> np.ndarray:
 def _detect_outer_rectangle(gray: np.ndarray) -> tuple[int, int, int, int] | None:
     """用 Hough 直线找最外侧版框。
 
+    v1.5+ C1：调共享 ``detect_lines`` + ``cluster_lines``，参数与 v1.4 等价。
+
     Returns:
         (left, top, right, bottom) 或 None。
     """
-    edges = cv2.Canny(gray, 50, 150)
-    # 用更细的线段，便于古籍中可能较短的直线
-    lines = cv2.HoughLinesP(
-        edges,
-        rho=1,
-        theta=np.pi / 180,
-        threshold=80,
-        minLineLength=max(20, gray.shape[1] // 20),
-        maxLineGap=10,
-    )
+    from book_cut.detect._hough import HOUGH_PRESET_SPLIT_BORDER, cluster_lines, detect_lines
+
+    lines = detect_lines(gray, **HOUGH_PRESET_SPLIT_BORDER)
     if lines is None:
         return None
 
-    verticals: list[int] = []
-    horizontals: list[int] = []
-
-    for x1, y1, x2, y2 in lines[:, 0]:
-        if abs(x1 - x2) < 3:  # 竖线
-            verticals.append((x1 + x2) // 2)
-        elif abs(y1 - y2) < 3:  # 横线
-            horizontals.append((y1 + y2) // 2)
-
-    if not verticals or not horizontals:
-        return None
-
-    # 聚类：合并相邻 ±5 像素的同类直线
-    def cluster(values: list[int], tol: int = 5) -> list[int]:
-        if not values:
-            return []
-        values = sorted(values)
-        clusters: list[list[int]] = []
-        cur = [values[0]]
-        for v in values[1:]:
-            if v - cur[-1] <= tol:
-                cur.append(v)
-            else:
-                clusters.append(cur)
-                cur = [v]
-        clusters.append(cur)
-        # 取每簇的中位数
-        return [int(np.median(c)) for c in clusters]
-
-    vs = cluster(verticals)
-    hs = cluster(horizontals)
-
+    vs, hs = cluster_lines(lines)
     if len(vs) < 2 or len(hs) < 2:
         return None
 
     h_img, w_img = gray.shape
-    # 版框一般靠内侧；取最靠左和最靠右的"较显著"竖线
-    # 简化：取 x 最小与 x 最大的两簇
     left = vs[0]
     right = vs[-1]
     top = hs[0]

@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-import cv2
 import numpy as np
 from PIL import Image
 
@@ -30,47 +29,21 @@ def _to_L_image(arr_u8: np.ndarray) -> Image.Image:
 
 
 def _detect_lines(gray: np.ndarray) -> tuple[list[int], list[int]] | None:
-    """返回 (竖线 x 列表, 横线 y 列表)。"""
-    edges = cv2.Canny(gray, 50, 150)
-    lines = cv2.HoughLinesP(
-        edges,
-        rho=1,
-        theta=np.pi / 180,
-        threshold=60,
-        minLineLength=max(20, gray.shape[1] // 30),
-        maxLineGap=8,
-    )
+    """返回 (竖线 x 列表, 横线 y 列表)。
+
+    v1.5+ C1：调共享 ``detect_lines`` + ``cluster_lines``，参数与 v1.4 等价
+    （threshold=60, min_length_factor=30, max_gap=8）。
+    """
+    from book_cut.detect._hough import HOUGH_PRESET_CROP_BORDER, cluster_lines, detect_lines
+
+    lines = detect_lines(gray, **HOUGH_PRESET_CROP_BORDER)
     if lines is None:
         return None
 
-    verticals: list[int] = []
-    horizontals: list[int] = []
-
-    for x1, y1, x2, y2 in lines[:, 0]:
-        if abs(x1 - x2) < 3:
-            verticals.append((x1 + x2) // 2)
-        elif abs(y1 - y2) < 3:
-            horizontals.append((y1 + y2) // 2)
-
-    if not verticals or not horizontals:
+    vs, hs = cluster_lines(lines)
+    if not vs or not hs:
         return None
-
-    def cluster(values: list[int], tol: int = 5) -> list[int]:
-        if not values:
-            return []
-        values = sorted(values)
-        clusters: list[list[int]] = []
-        cur = [values[0]]
-        for v in values[1:]:
-            if v - cur[-1] <= tol:
-                cur.append(v)
-            else:
-                clusters.append(cur)
-                cur = [v]
-        clusters.append(cur)
-        return [int(np.median(c)) for c in clusters]
-
-    return cluster(verticals), cluster(horizontals)
+    return vs, hs
 
 
 def crop_to_border_from_array(

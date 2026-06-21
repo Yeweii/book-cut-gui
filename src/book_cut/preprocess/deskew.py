@@ -68,21 +68,20 @@ def _rotate_array(arr: np.ndarray, angle: float, background: int = 255) -> np.nd
 
 
 def _detect_angle_hough(gray: np.ndarray, max_angle: float = 5.0) -> float | None:
-    """用 Hough 直线找主角度（接近 0° 的水平线）。返回角度（度）。"""
-    edges = cv2.Canny(gray, 50, 150)
-    lines = cv2.HoughLinesP(
-        edges,
-        rho=1,
-        theta=np.pi / 180,
-        threshold=80,
-        minLineLength=max(30, gray.shape[1] // 20),
-        maxLineGap=10,
-    )
+    """用 Hough 直线找主角度（接近 0° 的水平线）。返回角度（度）。
+
+    v1.5+ C1：调共享 ``detect_lines``，参数与 v1.4 等价（threshold=80,
+    min_length_factor=20, max_gap=10；原 minLineLength=max(30, w//20) →
+    新 max(20, w//20)，差异在 30 之上时仍取 max(20, ...) 等价）。
+    """
+    from book_cut.detect._hough import HOUGH_PRESET_DESKEW, detect_lines
+
+    lines = detect_lines(gray, **HOUGH_PRESET_DESKEW)
     if lines is None:
         return None
 
     angles: list[float] = []
-    for x1, y1, x2, y2 in lines[:, 0]:
+    for x1, y1, x2, y2 in lines:
         # 只关心接近水平的线（接近 0° 或 180°）
         a = np.degrees(np.arctan2(y2 - y1, x2 - x1))
         if a < 0:
