@@ -3,12 +3,16 @@
 v1.4：合并 PDF 时透传原 PDF 的 outline（书签）+ metadata。
 v1.5+ A1：主循环一次 ``convert("L")``，下游全部用 ``*_from_array`` 私有变体，
 消除每页 4-5 次重复 RGB→L 转换（133 页省 1.6s）。
+v1.5+ B1：主循环直接迭代 ``iter_pages``，不再 ``list`` 物化。
+        paper_pages 采样用 ``itertools.islice``。内存 O(N×page) → O(page)。
+v1.5+ B2：PDF 输出改 ``save_pdf_bytes`` + ``inject_outline_and_metadata_from_bytes``，
+        全内存拼接，去掉 tempfile 磁盘 I/O。
 """
 
 from __future__ import annotations
 
 import argparse
-import tempfile
+from itertools import chain, islice
 from pathlib import Path
 
 import numpy as np
@@ -16,7 +20,12 @@ from PIL import Image
 from tqdm import tqdm
 
 from book_cut import __version__
-from book_cut.io.exporter import ImageFormat, inject_outline_and_metadata, save_image, save_pdf
+from book_cut.io.exporter import (
+    ImageFormat,
+    inject_outline_and_metadata_from_bytes,
+    save_image,
+    save_pdf_bytes,
+)
 from book_cut.io.loader import (
     PageInfo,
     first_pdf_in_folder,
@@ -128,41 +137,40 @@ def _write_pdf_with_outline(
     mapping: dict[int, list[int]],
     enabled: bool,
 ) -> Path:
-    """写出最终 PDF。
+    """写出最终 PDF（v1.5+ B2：全内存，去 tempfile）。
 
-    - ``enabled`` 且有 ``toc`` / ``metadata`` / ``mapping`` → img2pdf 出中间 PDF
-      → pypdf 注入 outline + metadata → 覆盖
-    - 否则直接 img2pdf 写 ``pdf_path``
+    - ``enabled`` 且有 ``toc`` / ``metadata`` / ``mapping`` → img2pdf 出 bytes
+      → pypdf 从 BytesIO 读 → 注入 outline + metadata → 写 ``pdf_path``
+    - 否则 img2pdf bytes → 直接写 ``pdf_path``
     """
     if not (enabled and (toc or metadata) and mapping):
-        return save_pdf(image_paths, pdf_path)
+        pdf_bytes = save_pdf_bytes(image_paths)
+        pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        pdf_path.write_bytes(pdf_bytes)
+        return pdf_path
 
-    with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tmp:
-        tmp_path = Path(tmp.name)
-    try:
-        save_pdf(image_paths, tmp_path)
-        # producer 追加 book-cut 标识（透传的同时标记出处）
-        meta = dict(metadata)
-        if "/Producer" in meta:
-            meta["/Producer"] = f"{meta['/Producer']}; book-cut {__version__}"
-        else:
-            meta["/Producer"] = f"book-cut {__version__}"
-        return inject_outline_and_metadata(tmp_path, pdf_path, toc, meta, mapping)
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    pdf_bytes = save_pdf_bytes(image_paths)
+    # producer 追加 book-cut 标识（透传的同时标记出处）
+    meta = dict(metadata)
+    if "/Producer" in meta:
+        meta["/Producer"] = f"{meta['/Producer']}; book-cut {__version__}"
+    else:
+        meta["/Producer"] = f"book-cut {__version__}"
+    return inject_outline_and_metadata_from_bytes(
+        pdf_bytes, pdf_path, toc, meta, mapping
+    )
 
 
 def run_pipeline(args: argparse.Namespace) -> None:
-    """根据 CLI args 运行整条流水线。"""
+    """根据 CLI args 运行整条流水线（v1.5+ B1：流式）。
+
+    关键：不再 ``list(iter_pages(...))``，主循环直接迭代 generator，
+    每页 PageInfo 处理完即被 GC，内存从 O(N×page) → O(page)。
+    """
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
 
     input_path = Path(args.input)
-    pages: list[PageInfo] = list(iter_pages(args.input))
-    if not pages:
-        print(f"[WARN] 输入未发现任何页: {args.input}")
-        return
-
     fmt: ImageFormat = args.format
     crop_mode: str = getattr(args, "crop", "none")
     binarize_method: str = getattr(args, "binarize", "none")
@@ -172,15 +180,22 @@ def run_pipeline(args: argparse.Namespace) -> None:
     outline_enabled: bool = getattr(args, "outline", True)  # v1.4 新增
     book_name = input_path.stem if input_path.is_file() else input_path.name
 
-    # 自适应裁切：先估 book paper color，再注入到 crop step
+    # v1.5+ B1：流式 iterator（不再 list 物化整本书）
+    page_iter = iter_pages(args.input)
+
+    # paper_pages 采样：从 iterator 头部取前 N 个估 paper color。
+    # 注意：islice 会消耗前 N 个 item，所以主循环必须 chain(sampled, remaining)。
     paper_pages_n: int = max(1, getattr(args, "paper_pages", 5))
-    crop_config = _build_crop_config(args, pages[:paper_pages_n])
+    sampled_for_paper: list[PageInfo] = list(islice(page_iter, paper_pages_n))
+    crop_config = _build_crop_config(args, sampled_for_paper)
+    # sampled 在主循环中被 chain 复用，不能 del
 
     # v1.4：决定 outline / metadata 来源 PDF（仅 PDF 模式下有意义）
     pdf_path_final: Path | None = None
     outline_toc: list[tuple[int, str, int]] = []
     outline_metadata: dict[str, str] = {}
     outline_mapping: dict[int, list[int]] = {}
+    src_pdf_stem: str | None = None
     if getattr(args, "pdf", False):
         pdf_path_final = output_dir / f"{book_name}.pdf"
         if outline_enabled:
@@ -199,18 +214,23 @@ def run_pipeline(args: argparse.Namespace) -> None:
                     )
                 if outline_toc:
                     print(f"[INFO] 原 PDF outline: {len(outline_toc)} 个节点")
-            # src_pdf 是 outline source；mapping 只为它构建
-            # 保存供循环内用
-        # 没开 outline 或 src_pdf is None：mapping 留空 → _write_pdf_with_outline 走纯 img2pdf
+                src_pdf_stem = src_pdf.stem
+
+    # v1.5+ B1：先 peek 第一页验证非空，再进入主循环（保持原有"WARN: 0 页"行为）
+    # sampled_for_paper + page_iter 拼成完整流（避免 islice 消耗导致主循环丢页）
+    full_iter = chain(sampled_for_paper, page_iter)
+    try:
+        first_page = next(full_iter)
+    except StopIteration:
+        print(f"[WARN] 输入未发现任何页: {args.input}")
+        return
 
     image_paths: list[Path] = []
     counter = 0
-    src_pdf_stem: str | None = (
-        _resolve_outline_source(input_path)[0].stem
-        if (pdf_path_final is not None and outline_enabled and _resolve_outline_source(input_path)[0] is not None)
-        else None
-    )
-    for page in tqdm(pages, desc="切分"):
+
+    def _process_one(page: PageInfo) -> None:
+        """处理单页：deskew → split → crop → binarize → save_image."""
+        nonlocal counter
         image = page.image
 
         # 1. 可选：倾斜校正（在切分/裁切之前）
@@ -218,7 +238,6 @@ def run_pipeline(args: argparse.Namespace) -> None:
         if deskew_enabled:
             from book_cut.preprocess.deskew import deskew_from_array
 
-            # deskew 自己也转一次（用 arr 路径省一次 _to_gray_array 调用）
             arr_for_deskew = np.asarray(image.convert("L"))
             arr = deskew_from_array(arr_for_deskew)
         else:
@@ -255,6 +274,12 @@ def run_pipeline(args: argparse.Namespace) -> None:
         for p in sub_pages:
             counter += 1
             image_paths.append(save_image(p, output_dir, book_name, counter, fmt=fmt))
+
+    _process_one(first_page)
+
+    # tqdm 包装剩余 iterator（total 不知道 → 不显示 ETA，但有进度计数）
+    for page in tqdm(full_iter, desc="切分", initial=1):
+        _process_one(page)
 
     if getattr(args, "pdf", False):
         assert pdf_path_final is not None
