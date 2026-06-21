@@ -39,6 +39,9 @@ minversion = "7.0"
 addopts = "-ra -q"
 testpaths = ["tests"]
 pythonpath = ["src"]
+markers = [
+    "perf: 性能基准测试（v1.5+ 优化 backlog D1），用 `-m 'not perf'` 跳过",
+]
 
 [tool.ruff]
 line-length = 100
