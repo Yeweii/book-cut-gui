@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+
+# Virtual env
+.venv/
+venv/
+env/
+
+# Build artifacts
+build/
+dist/
+*.spec   # PyInstaller specs are local only; regenerate via packaging/build_macos.sh
+
+# Test / lint
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/
+*.swp
+.claude/
+
+# Samples — keep only the small test fixture; large user-provided scans stay local
+samples/sample_two_page.png
+!samples/sample_two_page.png
+samples/*.pdf
+samples/*/*.pdf
+samples/茶山集*/
+samples/醉翁*/
+samples/out/
+
+# Transient planning files
+plan.md
