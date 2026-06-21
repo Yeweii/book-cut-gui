@@ -106,3 +106,14 @@
 - [x] ZHSY 验证：book paper color=218，132 图，对比 v1.1 文本页 -13%~-17% 紧致（正确：泛黄纸不再被当内容）
 - [x] 茶山集 68 页回归：136 图 + PDF，行为一致
 - [x] `docs/sessions/2026-06-21-book-cut-v1.3.md` v1.3 记录
+
+## v1.3 · macOS GUI 打包 + 打包说明文档化 ✅
+
+- [x] `packaging/Book Cut.spec` hiddenimports 加 `book_cut.detect.paper` + Info.plist 版本 0.1.2 → 0.1.3
+- [x] `bash packaging/build_macos.sh` 跑通：`dist/Book Cut.app` 222MB arm64
+- [x] 启动 smoke test：进程存活 5+ 秒无崩溃
+- [x] PYZ 归档核查：`book_cut.detect.paper` 进了 bundle
+- [x] 清理 samples/out_* 5 个临时输出目录
+- [x] `docs/packaging.md` 新建：TL;DR / 前置 / 一键+手动 / 产物结构 / 发布版本 / 验证 5 步 / 常见问题 / Universal
+- [x] `README.md` 打包段链接更新到 `docs/packaging.md`
+- [x] `docs/sessions/2026-06-21-book-cut-v1.3-packaging.md` 打包记录
