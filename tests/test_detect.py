@@ -180,3 +180,103 @@ def test_border_fallback_uses_adaptive_config():
     adaptive = crop_to_border(img, config=cfg)
     expected = trim_margins(img, config=cfg)
     assert adaptive.size == expected.size
+
+
+# ============ D3：border 路径完整覆盖（v1.5 Sprint 1 防回归） ============
+
+
+def test_border_fallback_when_no_lines_detected():
+    """``_detect_lines`` 返 None → fallback 到 trim.
+
+    构造纯白图（无任何边 → Canny 空 → Hough 空 → return None）。
+    """
+    img = Image.new("RGB", (600, 400), "white")
+    # 加一点纯文字避免 trim 也跑出空（trim 走 paper-color-based 检测）
+    draw = ImageDraw.Draw(img)
+    for y in range(80, 320, 30):
+        draw.line([(100, y), (500, y)], fill="black", width=2)
+
+    out = crop_to_border(img, padding=2)
+    # border 检测不到 → fallback trim → 输出比原图小（裁到内容）
+    assert out.size != img.size
+    assert out.size[0] < img.size[0]
+
+
+def test_border_fallback_when_only_one_vertical(monkeypatch):
+    """``_detect_lines`` 返 (1 竖, N 横) → fallback 到 trim."""
+    import book_cut.detect.border as border_mod
+
+    # monkeypatch _detect_lines：只返 1 个竖线簇（< 2）
+    def fake_detect(gray: np.ndarray) -> tuple[list[int], list[int]] | None:
+        return ([100], [50, 100, 150, 200, 250, 300, 350])  # 只有 1 个竖线簇
+
+    monkeypatch.setattr(border_mod, "_detect_lines", fake_detect)
+
+    img = _page_with_white_margins()  # 有清晰版框，但被 mock 掉了
+    out = crop_to_border(img, padding=2)
+
+    # fallback 到 trim → 输出有内容（不是空 / 不是原图大小）
+    expected = trim_margins(img, padding=2)
+    assert out.size == expected.size
+
+
+def test_border_fallback_when_only_one_horizontal(monkeypatch):
+    """``_detect_lines`` 返 (N 竖, 1 横) → fallback 到 trim."""
+    import book_cut.detect.border as border_mod
+
+    def fake_detect(gray: np.ndarray) -> tuple[list[int], list[int]] | None:
+        return ([100, 200, 300, 400, 500], [200])  # 只有 1 个横线簇
+
+    monkeypatch.setattr(border_mod, "_detect_lines", fake_detect)
+
+    img = _page_with_white_margins()
+    out = crop_to_border(img, padding=2)
+
+    expected = trim_margins(img, padding=2)
+    assert out.size == expected.size
+
+
+def test_border_fallback_when_bbox_too_small(monkeypatch):
+    """``_detect_lines`` 返的 bbox < 20% 图像尺寸 → fallback 到 trim."""
+    import book_cut.detect.border as border_mod
+
+    def fake_detect(gray: np.ndarray) -> tuple[list[int], list[int]] | None:
+        # bbox (10, 10) - (50, 50) → 40x40，远小于 600x400 的 20%（120x80）
+        return ([10, 50], [10, 50])
+
+    monkeypatch.setattr(border_mod, "_detect_lines", fake_detect)
+
+    img = _page_with_white_margins()
+    out = crop_to_border(img, padding=2)
+
+    # fallback 到 trim
+    expected = trim_margins(img, padding=2)
+    assert out.size == expected.size
+
+
+def test_split_border_then_crop_border_chain():
+    """``--split border --crop border`` 联动：Hough 跑两次但结果都对。
+
+    验证：split_border 输出 2 张带边框的子图，crop_to_border 各自裁到版框内部。
+    """
+    from book_cut.split.border import split_border
+
+    # 800x500 双版框图（复用 conftest 的 fixture pattern）
+    img = Image.new("RGB", (800, 500), "white")
+    draw = ImageDraw.Draw(img)
+    draw.rectangle([(80, 60), (380, 440)], outline="black", width=2)
+    draw.rectangle([(420, 60), (720, 440)], outline="black", width=2)
+    for y in range(100, 400, 40):
+        draw.line([(100, y), (360, y)], fill="black", width=2)
+        draw.line([(440, y), (700, y)], fill="black", width=2)
+
+    # split: 2 张子图
+    sub_pages = split_border(img)
+    assert len(sub_pages) == 2
+
+    # crop: 每张裁到自己的版框内
+    cropped = [crop_to_border(p, padding=2) for p in sub_pages]
+    for c in cropped:
+        # 输出应比 split 的子图小（裁掉了边）
+        assert c.size[0] <= 350  # 380-80+2*2 = 304，但 Hough 可能略有偏差
+        assert c.size[1] <= 400

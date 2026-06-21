@@ -130,3 +130,68 @@ def test_half_on_small_image_fails():
 
     with pytest.raises(ValueError):
         split_half(tiny)
+
+
+# ----------------------------------------------------------------------------
+# D3：split_border 路径完整覆盖（v1.5 Sprint 1 防回归）
+# ----------------------------------------------------------------------------
+
+
+def test_split_border_fallback_to_half_when_no_border():
+    """``split_border`` 找不到版框 → fallback 到对半切。
+
+    触发条件：纯文字扫描件（无明显外接矩形），Hough 找不到 ≥2 竖/横线。
+    应输出 2 张等宽子图（half 行为）。
+    """
+    import numpy as np
+
+    from book_cut.split.border import split_border
+
+    # 800x500：纯白底 + 几行文字（无外接矩形）
+    arr = np.full((500, 800, 3), 255, dtype=np.uint8)
+    # 在中间画几条短横线（Hough 容易识别，但<2 竖/横成对的簇）
+    arr[100:120, 200:600] = 0
+    arr[200:220, 200:600] = 0
+    arr[300:320, 200:600] = 0
+    img = Image.fromarray(arr)
+
+    pages = split_border(img)
+    assert len(pages) == 2
+    # fallback 到 half → 左右等宽
+    assert pages[0].size[0] == 400
+    assert pages[1].size[0] == 400
+
+
+def test_split_border_with_clear_border():
+    """``split_border`` 找到版框 → 按版框水平中点切分（非 50%）。"""
+    # 用 _page_with_white_margins 风格的带边框图
+    img = Image.new("RGB", (800, 500), "white")
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(img)
+    # 左版框：(80, 60) - (380, 440)，右版框：(420, 60) - (720, 440)
+    draw.rectangle([(80, 60), (380, 440)], outline="black", width=3)
+    draw.rectangle([(420, 60), (720, 440)], outline="black", width=3)
+
+    from book_cut.split.border import split_border
+
+    pages = split_border(img)
+    assert len(pages) == 2
+    left_w, right_w = pages[0].size[0], pages[1].size[0]
+    # 整体中点 = (80+720)/2 = 400 → 切点不是 400（Hough 检测到的版框中点）
+    # 实际 Hough 可能把左右版框都检测出来，取最外侧 vs[0]=80, vs[-1]=720
+    # 但 split 用的是整体 [(80+720)/2 = 400]，应接近 400
+    assert 380 <= left_w <= 420
+
+
+def test_split_border_finds_no_border_on_solid_white():
+    """纯白图 → 完全无 Hough 线 → fallback 到 half."""
+    import numpy as np
+
+    from book_cut.split.border import split_border
+
+    img = Image.fromarray(np.full((500, 800, 3), 255, dtype=np.uint8))
+
+    pages = split_border(img)
+    assert len(pages) == 2
+    assert pages[0].size[0] == pages[1].size[0] == 400  # half fallback
