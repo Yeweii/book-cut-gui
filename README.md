@@ -169,7 +169,7 @@ open "dist/Book Cut.app"            # 启动 GUI
 - 右键 → "打开" → "仍要打开"，或
 - `xattr -d com.apple.quarantine "dist/Book Cut.app"`
 
-详细打包说明见 `packaging/Book Cut.spec` 和 `docs/sessions/2026-06-21-book-cut-v1.2.md`。
+详细打包说明、前置条件、验证清单、常见问题见 [`docs/packaging.md`](docs/packaging.md)。
 
 ## 路线图
 
