@@ -117,3 +117,22 @@
 - [x] `docs/packaging.md` 新建：TL;DR / 前置 / 一键+手动 / 产物结构 / 发布版本 / 验证 5 步 / 常见问题 / Universal
 - [x] `README.md` 打包段链接更新到 `docs/packaging.md`
 - [x] `docs/sessions/2026-06-21-book-cut-v1.3-packaging.md` 打包记录
+
+## v1.4 · PDF outline + metadata 透传 ✅（v1.4-outline-preserve 分支，未合 master）
+
+- [x] 提案：`docs/dev/2026-06-21-v1.4-outline-preserve.md`（方案 D：pypdf 后处理）
+- [x] 新增依赖 `pypdf==6.13.3`（纯 Python，~1MB，零间接依赖）
+- [x] `io/loader.py` 新增 `get_pdf_outline` / `get_pdf_metadata` / `first_pdf_in_folder`（不污染 PageInfo 抽象）
+- [x] `io/exporter.py` 新增 `inject_outline_and_metadata`（src → dst，pypdf 后处理）+ `STANDARD_METADATA_KEYS` 集合
+- [x] `pipeline.py` 维护 `mapping: dict[orig_idx → list[out_idx]]`；1:2 时 `mapping[i][0]`；RTL 翻转 sub_pages；多 PDF 源警告
+- [x] `cli.py` 新增 `--page-order {ltr,rtl}` + `--no-outline`（同时关 metadata）
+- [x] `gui.py` 镜像：页序下拉 + 保留书签 checkbox
+- [x] `Book Cut.spec` hiddenimports 加 `pypdf` + Info.plist 版本 0.1.3 → 0.1.4
+- [x] `tests/conftest.py` 3 个 PDF fixture：with_outline / no_outline / nested_outline
+- [x] `tests/test_outline.py` 17 个新 test（覆盖 T1-T11 + 3 个 helper + 3 个 E2E 场景）
+- [x] 65 测试全过（原 48 + 新增 17）；ruff 0 错
+- [x] ZHSY 验证：66 页 + 10 节点 outline 注入 → 132 输出页，outline 树完整保留，metadata 透传
+- [x] 茶山集回归：133 页 + 12 节点 → 266 页，nested outline 完整
+- [x] RTL 验证：--page-order rtl 翻转 [左,右]→[右,左]，outline 页号不变（"只指第一张"）
+- [x] README 加 v1.4 段 + CLI 表 + 推荐配方
+- [x] 记录：`docs/sessions/2026-06-21-book-cut-v1.4.md`

@@ -64,6 +64,8 @@ python -m book_cut --gui
 | `--half-offset` | `0` | 对半切的像素偏移（仅 `--split half` 生效） |
 | `--format` | `png` | `png` / `jpg` / `tif` / `webp` |
 | `--pdf` | 关 | 同时输出合并 PDF |
+| `--page-order` | `ltr` | 1:2 切分时输出顺序：`ltr`=左先右后 / `rtl`=右先左后（古籍竖排常用） |
+| `--no-outline` | 关 | 关闭 PDF outline（书签）/ metadata 透传（仅 `--pdf` 模式有效；兜底用） |
 | `--gui` | 关 | 启动 GUI |
 
 ### Python API
@@ -124,6 +126,31 @@ python -m book_cut -i book.pdf -o out --crop trim --paper-pages 10
 
 GUI 在"单页裁切"行多了 **自适应（按纸色）** 复选框（默认勾选）+ **采样页** spinner。
 
+## PDF outline / metadata 保留（v1.4+）
+
+当输入是 PDF 且开了 `--pdf` 时，book-cut 默认**把原 PDF 的 outline（书签）和 metadata（标题/作者等）透传到输出 PDF**：
+
+- outline 1:2 时**只指第一张**（LTR 指左，RTL 指右）—— 第二张不挂 outline 节点
+- 嵌套层级完整保留（卷 → 章 → 节）
+- metadata `Title/Author/Subject/Keywords/Creator` 一股脑透传；`Producer` 追加 `book-cut 0.1.4` 标记出处
+- 多 PDF 源（文件夹内多 PDF）只保留**第一个 PDF** 的 outline + metadata（v1.5 再做合并）
+- 纯图片输入无 outline 处理（无原 PDF 可参考）
+
+```bash
+# 默认：保留 outline + metadata
+python -m book_cut -i book.pdf -o out --split gutter --binarize sauvola --pdf
+
+# 关闭透传（兜底）
+python -m book_cut -i book.pdf -o out --pdf --no-outline
+
+# 繁体竖排古籍：用 rtl 让右页先出
+python -m book_cut -i 醉翁琴趣.pdf -o out --split gutter --pdf --page-order rtl
+```
+
+GUI 在"输出格式"行多了 **页序** 下拉（ltr / rtl）+ **保留书签** 复选框（默认勾选）。
+
+实现：img2pdf 出无 outline 中间 PDF → pypdf 后处理注入 outline + metadata → 覆盖。复用 img2pdf 的"无损"特性，新增依赖只有 ~1MB 的纯 Python `pypdf`。
+
 ## 项目结构
 
 ```
@@ -149,7 +176,7 @@ src/book_cut/
 ## 开发
 
 ```bash
-.venv/bin/pytest                  # 跑全部 36 个测试
+.venv/bin/pytest                  # 跑全部 65 个测试
 .venv/bin/pytest --cov=book_cut   # 覆盖率
 .venv/bin/ruff check src tests    # 静态检查
 .venv/bin/python scripts/make_sample.py samples/sample_two_page.png   # 生成测试图
@@ -173,13 +200,13 @@ open "dist/Book Cut.app"            # 启动 GUI
 
 ## 路线图
 
-v1.2 (2026-06-21)：PyInstaller 打包成 macOS .app，双击启动 GUI。
+- v1.3 (2026-06-21)：自适应裁切（按书级纸张色学习阈值）
+- v1.4 (2026-06-21)：PDF outline / metadata 透传；新增 `--page-order` + `--no-outline`
+- v1.2 (2026-06-21)：PyInstaller 打包成 macOS .app
 
 未来可选：
-- 自动 OCR 识别书名
-- 倾斜方向自适应（自动选 Hough vs 投影）
-- 切分质量评估（基于文本行完整性）
-- Deep learning 版框检测
+- v1.5 候选：PDF page labels（罗马数字）拆分；多 PDF outline 智能合并
+- v2 候选：方向 padding（天/地/内/外）；自动 OCR 识别书名；Deep learning 版框检测
 
 ## 许可
 
