@@ -38,6 +38,7 @@ a = Analysis(
         "book_cut.detect.trim",
         "book_cut.detect.border",
         "book_cut.detect.single_page",
+        "book_cut.detect.paper",
         "book_cut.preprocess.binarize",
         "book_cut.preprocess.deskew",
     ],
@@ -95,8 +96,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Book Cut",
         "CFBundleDisplayName": "Book Cut",
-        "CFBundleShortVersionString": "0.1.2",
-        "CFBundleVersion": "0.1.2",
+        "CFBundleShortVersionString": "0.1.3",
+        "CFBundleVersion": "0.1.3",
         "NSHighResolutionCapable": True,
         "LSApplicationCategoryType": "public.app-category.graphics-design",
         "NSHumanReadableCopyright": "MIT",
