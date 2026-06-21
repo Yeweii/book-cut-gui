@@ -32,28 +32,16 @@ def _ink_mask(arr: np.ndarray) -> np.ndarray:
     return arr < threshold
 
 
-def is_single_page(
-    image: Image.Image,
+def is_single_page_from_array(
+    arr: np.ndarray,
     gutter_x: int,
     ratio_threshold: float = 0.1,
     paper_min_mean: float = 240.0,
 ) -> bool:
-    """检测图像是否为单页。
+    """单页检测核心（v1.5+ A1：接受 ndarray）。
 
-    Args:
-        image: 输入图像。
-        gutter_x: 已找到的中缝列坐标。
-        ratio_threshold: 较小一侧 / 较大一侧 的最大比值；超过则视为单页。
-            0.1 表示一边墨迹占比是另一边的 10% 以下。
-        paper_min_mean: 空白侧平均灰度 ≥ 此值视为"纸"（衬纸 / 纸色），
-            判定为跨页（cover/衬页情况）；< 此值视为扫描台 / 校色卡，
-            判定为单页扫描。默认 240（衬纸白 ≈ 255、纸色中位 ≈ 217、
-            灰扫描台 ≈ 180/200、校色卡彩色 18% 灰 ≈ 118）。
-
-    Returns:
-        True 表示单页扫描。
+    ``is_single_page`` 的薄包装去掉 convert("L") 后，逻辑全在这里。
     """
-    arr = _to_gray_array(image)
     _h, w = arr.shape
     if w < 4 or gutter_x < 1 or gutter_x >= w - 1:
         return False
@@ -81,3 +69,34 @@ def is_single_page(
 
     # 空白侧是扫描台/校色卡 → 真正的单页扫描
     return True
+
+
+def is_single_page(
+    image: Image.Image,
+    gutter_x: int,
+    ratio_threshold: float = 0.1,
+    paper_min_mean: float = 240.0,
+) -> bool:
+    """检测图像是否为单页。
+
+    v1.5+ A1：薄包装，convert("L") 后调 ``is_single_page_from_array``。
+
+    Args:
+        image: 输入图像。
+        gutter_x: 已找到的中缝列坐标。
+        ratio_threshold: 较小一侧 / 较大一侧 的最大比值；超过则视为单页。
+            0.1 表示一边墨迹占比是另一边的 10% 以下。
+        paper_min_mean: 空白侧平均灰度 ≥ 此值视为"纸"（衬纸 / 纸色），
+            判定为跨页（cover/衬页情况）；< 此值视为扫描台 / 校色卡，
+            判定为单页扫描。默认 240（衬纸白 ≈ 255、纸色中位 ≈ 217、
+            灰扫描台 ≈ 180/200、校色卡彩色 18% 灰 ≈ 118）。
+
+    Returns:
+        True 表示单页扫描。
+    """
+    return is_single_page_from_array(
+        _to_gray_array(image),
+        gutter_x,
+        ratio_threshold=ratio_threshold,
+        paper_min_mean=paper_min_mean,
+    )

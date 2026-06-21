@@ -1,4 +1,7 @@
-"""版框线切分：通过 Hough 直线检测找最大外接矩形，按矩形中心切分。"""
+"""版框线切分：通过 Hough 直线检测找最大外接矩形，按矩形中心切分。
+
+v1.5+ A1：``split_border_from_array`` 私有变体接受 ndarray，pipeline 跳过重复 ``convert("L")``。
+"""
 
 from __future__ import annotations
 
@@ -94,14 +97,39 @@ def find_border_split(image: Image.Image) -> int | None:
     return (left + right) // 2
 
 
-def split_border(image: Image.Image) -> list[Image.Image]:
-    """按版框水平中心切分；找不到版框时 fallback 到对半切。返回 [left, right]。"""
-    from book_cut.split.half import split_half
+def find_border_split_from_array(arr: np.ndarray) -> int | None:
+    """版框 split 核心（v1.5+ A1：接受 ndarray）。"""
+    rect = _detect_outer_rectangle(arr)
+    if rect is None:
+        return None
+    left, _top, right, _bottom = rect
+    return (left + right) // 2
 
+
+def split_border_from_array(arr: np.ndarray) -> list[np.ndarray]:
+    """版框切分核心（v1.5+ A1：接受 ndarray，返回 list[ndarray]）。
+
+    找不到版框时 fallback 到对半切 ndarray 版。
+    """
+    from book_cut.split.half import split_half_from_array
+
+    w = arr.shape[1]
+    if w < 2:
+        raise ValueError(f"图像宽度过小: {w}")
+    x = find_border_split_from_array(arr)
+    if x is None or not (1 <= x <= w - 1):
+        return split_half_from_array(arr)
+    return [arr[:, :x], arr[:, x:]]
+
+
+def split_border(image: Image.Image) -> list[Image.Image]:
+    """按版框水平中心切分；找不到版框时 fallback 到对半切。返回 [left, right]。
+
+    v1.5+ A1：薄包装，调 ``split_border_from_array``，结果包回 Image。
+    """
     w = image.size[0]
     if w < 2:
         raise ValueError(f"图像宽度过小: {w}")
-    x = find_border_split(image)
-    if x is None or not (1 <= x <= w - 1):
-        return split_half(image)
-    return [image.crop((0, 0, x, image.size[1])), image.crop((x, 0, w, image.size[1]))]
+    arr = _to_gray_bgr(image)
+    sub_arrs = split_border_from_array(arr)
+    return [Image.fromarray(sub, mode="L") for sub in sub_arrs]

@@ -1,6 +1,8 @@
 """中缝检测切分：通过列投影找最亮列作为切分点。
 
 适用场景：扫描平整、装订线为白色或较浅的输入（绝大多数平板扫描）。
+
+v1.5+ A1：``split_gutter_from_array`` 私有变体接受 ndarray，pipeline 跳过重复 ``convert("L")``。
 """
 
 from __future__ import annotations
@@ -38,6 +40,18 @@ def find_gutter_column(
         切分列 x 坐标。
     """
     arr = _to_gray_array(image)
+    return find_gutter_column_from_array(
+        arr, search_range=search_range, min_white_value=min_white_value, min_run_width=min_run_width
+    )
+
+
+def find_gutter_column_from_array(
+    arr: np.ndarray,
+    search_range: float = 0.4,
+    min_white_value: float = 220.0,
+    min_run_width: int = 10,
+) -> int:
+    """中缝列核心（v1.5+ A1：接受 ndarray）。"""
     _h, w = arr.shape
     col_means = arr.mean(axis=0)
 
@@ -71,12 +85,40 @@ def find_gutter_column(
     return lo + best_start + best_len // 2
 
 
+def split_gutter_from_array(
+    arr: np.ndarray,
+    search_range: float = 0.4,
+    auto_single_page: bool = True,
+) -> list[np.ndarray]:
+    """中缝切分核心（v1.5+ A1：接受 ndarray，返回 list[ndarray]）。
+
+    pipeline 热路径：输入 arr，输出两个子 ndarray。下游 crop/binarize 继续在 arr 上跑。
+    """
+    w = arr.shape[1]
+    if w < 2:
+        raise ValueError(f"图像宽度过小: {w}")
+    x = find_gutter_column_from_array(
+        arr, search_range=search_range, min_white_value=220.0, min_run_width=10
+    )
+    x = max(1, min(w - 1, x))
+
+    if auto_single_page:
+        from book_cut.detect.single_page import is_single_page_from_array
+
+        if is_single_page_from_array(arr, gutter_x=x):
+            return [arr]
+
+    return [arr[:, :x], arr[:, x:]]
+
+
 def split_gutter(
     image: Image.Image,
     search_range: float = 0.4,
     auto_single_page: bool = True,
 ) -> list[Image.Image]:
     """按中缝列切分；检测到单页时直接返回整图（列表长度为 1）。
+
+    v1.5+ A1：薄包装，convert("L") 后调 ``split_gutter_from_array``，结果包回 Image。
 
     Args:
         image: 输入图像。
@@ -89,13 +131,9 @@ def split_gutter(
     w = image.size[0]
     if w < 2:
         raise ValueError(f"图像宽度过小: {w}")
-    x = find_gutter_column(image, search_range=search_range)
-    x = max(1, min(w - 1, x))
-
-    if auto_single_page:
-        from book_cut.detect.single_page import is_single_page
-
-        if is_single_page(image, gutter_x=x):
-            return [image.copy()]
-
-    return [image.crop((0, 0, x, image.size[1])), image.crop((x, 0, w, image.size[1]))]
+    arr = _to_gray_array(image)
+    sub_arrs = split_gutter_from_array(
+        arr, search_range=search_range, auto_single_page=auto_single_page
+    )
+    # 包回 L mode Image（保留与原公共 API 行为一致）
+    return [Image.fromarray(sub, mode="L") for sub in sub_arrs]

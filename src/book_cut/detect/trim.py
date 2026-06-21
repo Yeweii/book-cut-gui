@@ -7,6 +7,8 @@
 - **adaptive 模式**（传 ``config=CropConfig(...)``）：
   用 ``config.ink_threshold`` 作墨迹阈值，``config.padding``（或按尺寸自适应）作 padding，
   ``config.min_edge_ink`` 作边缘"有内容"判定（默认 3 px，杀单像素 JPEG 噪声）。
+
+v1.5+ A1：``_trim_margins_from_array`` 私有变体接受 ndarray，pipeline 用它避免重复 ``convert("L")``。
 """
 
 from __future__ import annotations
@@ -20,32 +22,23 @@ if TYPE_CHECKING:
     from book_cut.detect.paper import CropConfig
 
 
-def trim_margins(
-    image: Image.Image,
+def _to_L_image(arr_u8: np.ndarray) -> Image.Image:
+    """ndarray (uint8) → L mode PIL Image（trim/binarize 共用）。"""
+    return Image.fromarray(arr_u8, mode="L")
+
+
+def _trim_margins_from_array(
+    arr: np.ndarray,
+    *,
+    config: CropConfig | None = None,
     threshold: int | None = None,
     padding: int | None = None,
-    config: CropConfig | None = None,
 ) -> Image.Image:
-    """去掉图片四周的白边。
+    """trim 核心逻辑（v1.5+ A1：接受 ndarray，返回 Image）。
 
-    策略：扫描每行/列，把"有内容"行/列的首末位置作为裁切边界，外加 padding。
-
-    Args:
-        image: 输入图像。
-        threshold: 灰度值 < threshold 视为有内容（legacy）。
-            缺省 = 240。``config`` 不为 None 时忽略。
-        padding: 保留的最小边距（像素，legacy）。缺省 = 10。
-            ``config`` 不为 None 时忽略（用 config.padding / 自适应）。
-        config: 自适应裁切配置。``None`` = legacy 模式。
-
-    Returns:
-        裁切后的图像。
+    公共函数 ``trim_margins`` 的薄包装去掉后，逻辑全在这里。
+    pipeline 在主循环一次 ``convert("L")`` 后直接调本函数，跳过重复转换。
     """
-    if image.mode != "L":
-        gray = image.convert("L")
-    else:
-        gray = image
-    arr = np.asarray(gray)
     h, w = arr.shape
 
     # 选择模式：config 优先；否则用 legacy 显式参数；再否则默认 240/10
@@ -72,8 +65,8 @@ def trim_margins(
     cols_idx = np.where(col_has_content)[0]
 
     if len(rows_idx) == 0 or len(cols_idx) == 0:
-        # 全白/全非白：原图返回
-        return image
+        # 全白/全非白：原图返回（重建 Image）
+        return _to_L_image(arr)
 
     top = int(rows_idx[0])
     bottom = int(rows_idx[-1])
@@ -88,9 +81,42 @@ def trim_margins(
 
     # 至少留 1px
     if bottom <= top or right <= left:
-        return image
+        return _to_L_image(arr)
 
-    return image.crop((left, top, right + 1, bottom + 1))
+    return _to_L_image(arr[top : bottom + 1, left : right + 1])
+
+
+def trim_margins(
+    image: Image.Image,
+    threshold: int | None = None,
+    padding: int | None = None,
+    config: CropConfig | None = None,
+) -> Image.Image:
+    """去掉图片四周的白边。
+
+    策略：扫描每行/列，把"有内容"行/列的首末位置作为裁切边界，外加 padding。
+
+    v1.5+ A1：薄包装，convert("L") 后调 ``_trim_margins_from_array``。
+
+    Args:
+        image: 输入图像。
+        threshold: 灰度值 < threshold 视为有内容（legacy）。
+            缺省 = 240。``config`` 不为 None 时忽略。
+        padding: 保留的最小边距（像素，legacy）。缺省 = 10。
+            ``config`` 不为 None 时忽略（用 config.padding / 自适应）。
+        config: 自适应裁切配置。``None`` = legacy 模式。
+
+    Returns:
+        裁切后的图像。
+    """
+    if image.mode != "L":
+        gray = image.convert("L")
+    else:
+        gray = image
+    arr = np.asarray(gray)
+    return _trim_margins_from_array(
+        arr, config=config, threshold=threshold, padding=padding
+    )
 
 
 def _default_adaptive_padding(h: int, w: int) -> int:
