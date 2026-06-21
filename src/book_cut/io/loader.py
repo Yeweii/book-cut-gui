@@ -60,6 +60,68 @@ def _iter_pdf(pdf_path: Path, dpi: int = 300) -> Iterator[PageInfo]:
         doc.close()
 
 
+# ----------------------------------------------------------------------------
+# v1.4 新增：PDF outline / metadata 抓取（独立于 PageInfo）
+# ----------------------------------------------------------------------------
+
+# pymupdf metadata 字段 → pypdf Info 字典键（带斜杠）映射
+_METADATA_KEY_MAP: dict[str, str] = {
+    "title": "/Title",
+    "author": "/Author",
+    "subject": "/Subject",
+    "keywords": "/Keywords",
+    "creator": "/Creator",
+    "creationDate": "/CreationDate",
+    "modDate": "/ModDate",
+}
+
+
+def get_pdf_outline(pdf_path: str | Path) -> list[tuple[int, str, int]]:
+    """读取 PDF 顶层 outline（书签）树。
+
+    Returns:
+        ``[(level, title, page_1idx), ...]`` —— 与 pymupdf ``doc.get_toc()``
+        同构（page 1-indexed）。空列表表示无 outline。
+    """
+    import pymupdf
+
+    doc = pymupdf.open(pdf_path)
+    try:
+        toc = doc.get_toc() or []
+        # 转成 list[tuple] 以免调用方误以为是 pymupdf 内部类型
+        return [(int(lvl), str(title), int(p1)) for lvl, title, p1 in toc]
+    finally:
+        doc.close()
+
+
+def get_pdf_metadata(pdf_path: str | Path) -> dict[str, str]:
+    """读取 PDF ``/Info`` metadata（title/author/creator 等）。
+
+    Returns:
+        ``{pypdf_key: value}``，key 形如 ``"/Title"``，可直接喂给
+        ``PdfWriter.add_metadata``。空字段会被过滤掉。
+    """
+    import pymupdf
+
+    doc = pymupdf.open(pdf_path)
+    try:
+        raw = doc.metadata or {}
+    finally:
+        doc.close()
+    out: dict[str, str] = {}
+    for src_key, dst_key in _METADATA_KEY_MAP.items():
+        val = raw.get(src_key)
+        if val:  # 过滤 None / "" / 空串
+            out[dst_key] = str(val)
+    return out
+
+
+def first_pdf_in_folder(folder: Path) -> Path | None:
+    """递归查找 folder 内按文件名排序的第一个 PDF（用于多 PDF 源时取 outline）。"""
+    pdfs = sorted(p for p in folder.rglob("*") if p.is_file() and _is_pdf(p))
+    return pdfs[0] if pdfs else None
+
+
 def _iter_image_file(path: Path) -> Iterator[PageInfo]:
     yield PageInfo(image=_load_image(path), source_name=path.stem, page_index=0)
 

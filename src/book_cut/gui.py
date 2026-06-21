@@ -207,6 +207,23 @@ def run_gui() -> None:
         row=0, column=1, padx=12
     )
 
+    # v1.4：页序 + 保留书签
+    order_var = tk.StringVar(value="ltr")
+    outline_var = tk.BooleanVar(value=True)
+    po_frame = ttk.Frame(fmt_frame)
+    po_frame.grid(row=0, column=2, padx=(16, 0))
+    ttk.Label(po_frame, text="页序:").grid(row=0, column=0)
+    ttk.Combobox(
+        po_frame,
+        textvariable=order_var,
+        values=["ltr", "rtl"],
+        state="readonly",
+        width=5,
+    ).grid(row=0, column=1, padx=(2, 8))
+    ttk.Checkbutton(po_frame, text="保留书签", variable=outline_var).grid(
+        row=0, column=2
+    )
+
     # 进度条
     progress = ttk.Progressbar(root, mode="indeterminate")
     progress.grid(row=8, column=0, columnspan=3, sticky="ew", padx=8, pady=(12, 4))
@@ -235,6 +252,8 @@ def run_gui() -> None:
             "format": format_var.get(),
             "pdf": pdf_var.get(),
             "deskew": deskew_var.get(),
+            "page_order": order_var.get(),
+            "outline": outline_var.get(),
         }
         t = threading.Thread(
             target=_run_pipeline_thread,

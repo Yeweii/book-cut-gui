@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "book-cut"
-version = "0.1.0"
+version = "0.1.4"
 description = "Split two-page ancient book scans into single pages"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -17,6 +17,7 @@ dependencies = [
     "pymupdf>=1.23",
     "img2pdf>=0.4",
     "tqdm>=4.65",
+    "pypdf>=4.0",
 ]
 
 [project.optional-dependencies]

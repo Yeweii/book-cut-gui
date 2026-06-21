@@ -61,6 +61,19 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--pdf", action="store_true", help="同时输出合并 PDF（img2pdf 无损）")
     parser.add_argument(
+        "--page-order",
+        choices=["ltr", "rtl"],
+        default="ltr",
+        help="1:2 切分时输出顺序：ltr=左先右后（默认）/ rtl=右先左后（古籍竖排常用）",
+    )
+    parser.add_argument(
+        "--no-outline",
+        dest="outline",
+        action="store_false",
+        default=True,
+        help="关闭 PDF outline（书签）/ metadata 透传（仅 --pdf 模式有效；兜底用）",
+    )
+    parser.add_argument(
         "--format",
         choices=["png", "jpg", "jpeg", "tif", "tiff", "webp"],
         default="png",
