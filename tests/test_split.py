@@ -177,7 +177,7 @@ def test_split_border_with_clear_border():
 
     pages = split_border(img)
     assert len(pages) == 2
-    left_w, right_w = pages[0].size[0], pages[1].size[0]
+    left_w = pages[0].size[0]
     # 整体中点 = (80+720)/2 = 400 → 切点不是 400（Hough 检测到的版框中点）
     # 实际 Hough 可能把左右版框都检测出来，取最外侧 vs[0]=80, vs[-1]=720
     # 但 split 用的是整体 [(80+720)/2 = 400]，应接近 400
