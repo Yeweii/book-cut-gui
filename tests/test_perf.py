@@ -83,3 +83,76 @@ def test_binarize_sauvola_4000_perf():
     print(f"\n[binarize_sauvola 4000x4000] {elapsed_ms:.1f}ms")
     assert out.size == img.size
     assert elapsed_ms < 800, f"性能退化：{elapsed_ms:.1f}ms > 800ms"
+
+
+# ----------------------------------------------------------------------------
+# v1.5+ A1：全流水线性能（单次 RGB→L 转换）
+# ----------------------------------------------------------------------------
+
+
+def test_pipeline_full_perf_4000():
+    """全流水线 4000×4000 RGB 性能基准（v1.5+ A1 量化）。
+
+    流水线：deskew=False + split gutter + crop border + binarize sauvola
+    v1.4 baseline：~160ms/页（每页 5 次 convert("L")）
+    v1.5+ A1 目标：~145ms/页（单次 convert，余 4 次消除，省 10%）
+    阈值 500ms 留 3x 余量（仅作退化检测）。
+    """
+    from book_cut.preprocess.binarize import binarize_sauvola_from_array
+    from book_cut.split.gutter import split_gutter_from_array
+    from book_cut.detect.border import crop_to_border_from_array
+
+    img = _synth_double_page(4000)
+    # 热身
+    arr = np.asarray(img.convert("L"))
+    sub_arrs = split_gutter_from_array(arr, auto_single_page=False)
+    _ = crop_to_border_from_array(sub_arrs[0], padding=10)
+    _ = binarize_sauvola_from_array(sub_arrs[0].astype(np.float32))
+
+    t = time.perf_counter()
+    # A1 全流水线（arr 路径）
+    arr = np.asarray(img.convert("L"))  # ← 唯一一次 RGB→L
+    sub_arrs = split_gutter_from_array(arr, auto_single_page=False)
+    for sub in sub_arrs:
+        cropped = crop_to_border_from_array(sub, padding=10)
+        _ = binarize_sauvola_from_array(np.asarray(cropped.convert("L"), dtype=np.float32))
+    elapsed_ms = (time.perf_counter() - t) * 1000
+
+    print(f"\n[pipeline full 4000x4000 A1] {elapsed_ms:.1f}ms")
+    assert elapsed_ms < 500, f"性能退化：{elapsed_ms:.1f}ms > 500ms"
+
+
+# ----------------------------------------------------------------------------
+# v1.5+ A1：行为对等（公共 API vs ``*_from_array``）
+# ----------------------------------------------------------------------------
+
+
+def test_trim_margins_from_array_matches_public():
+    """trim 公共 API 与 ``_trim_margins_from_array`` 输出像素一致（A1 行为对等）。"""
+    from book_cut.detect.trim import _trim_margins_from_array, trim_margins
+
+    img = _synth_double_page(400)
+    arr = np.asarray(img.convert("L"))
+
+    out_public = np.asarray(trim_margins(img))
+    out_from_arr = np.asarray(_trim_margins_from_array(arr))
+
+    assert out_public.shape == out_from_arr.shape
+    assert np.array_equal(out_public, out_from_arr), "公共 API 与 _from_array 像素不一致"
+
+
+def test_binarize_sauvola_from_array_matches_public():
+    """binarize_sauvola 公共 API 与 ``binarize_sauvola_from_array`` 输出一致（A1）。"""
+    from book_cut.preprocess.binarize import (
+        binarize_sauvola,
+        binarize_sauvola_from_array,
+    )
+
+    img = _synth_double_page(400)
+    arr = np.asarray(img.convert("L"), dtype=np.float32)
+
+    out_public = np.asarray(binarize_sauvola(img))
+    out_from_arr = np.asarray(binarize_sauvola_from_array(arr))
+
+    assert out_public.shape == out_from_arr.shape
+    assert np.array_equal(out_public, out_from_arr), "公共 API 与 _from_array 像素不一致"
