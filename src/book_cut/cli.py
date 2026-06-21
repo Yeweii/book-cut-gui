@@ -42,6 +42,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="单页裁切：none=不裁 / trim=切白边 / border=版框内裁",
     )
     parser.add_argument(
+        "--crop-adaptive",
+        choices=["auto", "fixed"],
+        default="auto",
+        help="裁切阈值/边距策略：auto=按纸张色自适应（默认）/ fixed=v1.1 硬编码 240",
+    )
+    parser.add_argument(
+        "--paper-pages",
+        type=int,
+        default=5,
+        help="用于学习书级纸张色的采样页数（仅 --crop-adaptive auto 时生效；默认 5）",
+    )
+    parser.add_argument(
         "--binarize",
         choices=["none", "otsu", "adaptive", "sauvola"],
         default="none",

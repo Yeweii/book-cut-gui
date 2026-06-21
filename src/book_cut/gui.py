@@ -153,6 +153,29 @@ def run_gui() -> None:
         ttk.Radiobutton(crop_frame, text=label, variable=crop_var, value=val).grid(
             row=0, column=i, padx=4
         )
+    # 自适应裁切：v1.3 新增
+    crop_adaptive_var = tk.BooleanVar(value=True)
+    paper_pages_var = tk.IntVar(value=5)
+    paper_pages_spin = ttk.Spinbox(
+        crop_frame,
+        textvariable=paper_pages_var,
+        from_=1,
+        to=50,
+        width=4,
+    )
+
+    def _on_adaptive_toggle(*_args) -> None:
+        state = "normal" if crop_adaptive_var.get() else "disabled"
+        paper_pages_spin.config(state=state)
+
+    crop_adaptive_var.trace_add("write", _on_adaptive_toggle)
+    ttk.Checkbutton(
+        crop_frame,
+        text="自适应（按纸色）",
+        variable=crop_adaptive_var,
+    ).grid(row=0, column=4, padx=(16, 4))
+    ttk.Label(crop_frame, text="采样页:").grid(row=0, column=5)
+    paper_pages_spin.grid(row=0, column=6, padx=(0, 4))
 
     # 二值化
     ttk.Label(root, text="二值化:").grid(row=6, column=0, sticky="e", **pad)
@@ -206,6 +229,8 @@ def run_gui() -> None:
         values = {
             "split": split_var.get(),
             "crop": crop_var.get(),
+            "crop_adaptive": "auto" if crop_adaptive_var.get() else "fixed",
+            "paper_pages": paper_pages_var.get(),
             "binarize": binarize_var.get(),
             "format": format_var.get(),
             "pdf": pdf_var.get(),

@@ -95,6 +95,35 @@ python -m book_cut -i book.pdf -o out --deskew --split border --crop border --bi
 python -m book_cut -i book.pdf -o out --deskew --split gutter --binarize sauvola --pdf
 ```
 
+## 自适应裁切（v1.3+）
+
+切白边（`--crop trim`）与版框内裁（`--crop border`）的 fallback 现在**默认按纸张色自适应**：
+
+- 用 PDF 前 N 页（默认 5）估计"书级纸张色"
+- 自适应墨迹阈值 = `paper_color − 30`（下限 60）
+- 自适应 padding = `max(短边 × 2%, 5)`，clamp ≤ 30
+- 边缘"有内容"判定 ≥ 3 个 ink 像素（抗 JPEG 噪声）
+
+古籍泛黄/泛灰（paper median 200-220）时，旧硬编码 `threshold=240` 会把纸当内容、留下黄边；
+自适应会**更紧致地切到真正内容**。在 `ZHSY100456_醉翁琴趣外篇`（66 页，paper p95=218）上：
+
+| 模式 | 图数 | 平均尺寸 | 总输出大小 | 耗时 |
+|------|------|----------|------------|------|
+| `--crop-adaptive fixed` (v1.1) | 132 | 515×790 | 2.7M | 2.82s |
+| `--crop-adaptive auto` (v1.3) | 132 | 469×688 | 2.6M | 2.86s |
+
+CLI 开关：
+
+```bash
+# 显式切回 v1.1 行为
+python -m book_cut -i book.pdf -o out --crop trim --crop-adaptive fixed
+
+# 改采样页数（混合纸张的书可加大）
+python -m book_cut -i book.pdf -o out --crop trim --paper-pages 10
+```
+
+GUI 在"单页裁切"行多了 **自适应（按纸色）** 复选框（默认勾选）+ **采样页** spinner。
+
 ## 项目结构
 
 ```
