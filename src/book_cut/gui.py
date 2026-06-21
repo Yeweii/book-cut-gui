@@ -13,6 +13,10 @@ from tkinter import filedialog, messagebox, ttk
 from book_cut import __version__
 from book_cut.pipeline import run_pipeline
 
+# v1.4：GUI 用中文显示，映射到 CLI 的 ltr/rtl 值
+PAGE_ORDER_LABELS: tuple[str, ...] = ("先左后右", "先右后左")
+PAGE_ORDER_MAP: dict[str, str] = {"先左后右": "ltr", "先右后左": "rtl"}
+
 # ----------------------------------------------------------------------------
 # 后台 worker
 # ----------------------------------------------------------------------------
@@ -208,7 +212,7 @@ def run_gui() -> None:
     )
 
     # v1.4：页序 + 保留书签
-    order_var = tk.StringVar(value="ltr")
+    order_var = tk.StringVar(value=PAGE_ORDER_LABELS[0])
     outline_var = tk.BooleanVar(value=True)
     po_frame = ttk.Frame(fmt_frame)
     po_frame.grid(row=0, column=2, padx=(16, 0))
@@ -216,9 +220,9 @@ def run_gui() -> None:
     ttk.Combobox(
         po_frame,
         textvariable=order_var,
-        values=["ltr", "rtl"],
+        values=list(PAGE_ORDER_LABELS),
         state="readonly",
-        width=5,
+        width=8,
     ).grid(row=0, column=1, padx=(2, 8))
     ttk.Checkbutton(po_frame, text="保留书签", variable=outline_var).grid(
         row=0, column=2
@@ -252,7 +256,7 @@ def run_gui() -> None:
             "format": format_var.get(),
             "pdf": pdf_var.get(),
             "deskew": deskew_var.get(),
-            "page_order": order_var.get(),
+            "page_order": PAGE_ORDER_MAP[order_var.get()],
             "outline": outline_var.get(),
         }
         t = threading.Thread(

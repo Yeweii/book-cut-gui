@@ -147,7 +147,7 @@ python -m book_cut -i book.pdf -o out --pdf --no-outline
 python -m book_cut -i 醉翁琴趣.pdf -o out --split gutter --pdf --page-order rtl
 ```
 
-GUI 在"输出格式"行多了 **页序** 下拉（ltr / rtl）+ **保留书签** 复选框（默认勾选）。
+GUI 在"输出格式"行多了 **页序** 下拉（**先左后右** / **先右后左**）+ **保留书签** 复选框（默认勾选）。GUI 显示用中文，CLI 仍用 `ltr/rtl`。
 
 实现：img2pdf 出无 outline 中间 PDF → pypdf 后处理注入 outline + metadata → 覆盖。复用 img2pdf 的"无损"特性，新增依赖只有 ~1MB 的纯 Python `pypdf`。
 
