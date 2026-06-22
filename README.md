@@ -132,7 +132,7 @@ GUI 在"单页裁切"行多了 **自适应（按纸色）** 复选框（默认�
 
 - outline 1:2 时**只指第一张**（LTR 指左，RTL 指右）—— 第二张不挂 outline 节点
 - 嵌套层级完整保留（卷 → 章 → 节）
-- metadata `Title/Author/Subject/Keywords/Creator` 一股脑透传；`Producer` 追加 `book-cut 0.1.4` 标记出处
+- metadata `Title/Author/Subject/Keywords/Creator` 一股脑透传；`Producer` 追加 `book-cut 0.1.6` 标记出处
 - 多 PDF 源（文件夹内多 PDF）只保留**第一个 PDF** 的 outline + metadata（v1.5 再做合并）
 - 纯图片输入无 outline 处理（无原 PDF 可参考）
 
@@ -176,7 +176,7 @@ src/book_cut/
 ## 开发
 
 ```bash
-.venv/bin/pytest                  # 跑全部 65 个测试
+.venv/bin/pytest                  # 跑全部 213 个测试
 .venv/bin/pytest --cov=book_cut   # 覆盖率
 .venv/bin/ruff check src tests    # 静态检查
 .venv/bin/python scripts/make_sample.py samples/sample_two_page.png   # 生成测试图
@@ -200,8 +200,10 @@ open "dist/Book Cut.app"            # 启动 GUI
 
 ## 路线图
 
-- v1.3 (2026-06-21)：自适应裁切（按书级纸张色学习阈值）
+- v1.6 (2026-06-22)：split-crop 抗伤字/抗杂质；Hough 缓存联动（A3）；Sauvola 原地写（B3）；pipeline 拆 3 模块（C3）；paper/trim 共享 utils（C2）；GUI UX 改进（E1+E3）
+- v1.5 (2026-06-21)：per-page paper color override；流式 iter_pages（O(N×page) → O(page)）；outline 注入全内存
 - v1.4 (2026-06-21)：PDF outline / metadata 透传；新增 `--page-order` + `--no-outline`
+- v1.3 (2026-06-21)：自适应裁切（按书级纸张色学习阈值）
 - v1.2 (2026-06-21)：PyInstaller 打包成 macOS .app
 
 未来可选：
