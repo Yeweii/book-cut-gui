@@ -1,12 +1,13 @@
-"""处理流水线：load → deskew → split → crop → binarize → export。
+"""orchestrator：流水线主循环。
 
-v1.4：合并 PDF 时透传原 PDF 的 outline（书签）+ metadata。
-v1.5+ A1：主循环一次 ``convert("L")``，下游全部用 ``*_from_array`` 私有变体，
-消除每页 4-5 次重复 RGB→L 转换（133 页省 1.6s）。
-v1.5+ B1：主循环直接迭代 ``iter_pages``，不再 ``list`` 物化。
-        paper_pages 采样用 ``itertools.islice``。内存 O(N×page) → O(page)。
-v1.5+ B2：PDF 输出改 ``save_pdf_bytes`` + ``inject_outline_and_metadata_from_bytes``，
-        全内存拼接，去掉 tempfile 磁盘 I/O。
+职责：
+- ``run_pipeline(args)``：顶层入口
+- ``_process_one(page, ...)``：单页 deskew → split → crop → binarize → save
+- ``_split_from_array(arr, strategy, ...)``：split 调度
+- ``_crop_pages_from_arrays(...)`` / ``_crop_pages_from_arrays_with_config(...)``：crop 调度
+- ``_reverse_pair(sub_pages)``：RTL flip
+
+v1.6+ C3：从原 455 行 ``pipeline.py`` 拆出，独立模块。
 """
 
 from __future__ import annotations
@@ -19,20 +20,15 @@ import numpy as np
 from PIL import Image
 from tqdm import tqdm
 
-from book_cut import __version__
-from book_cut.io.exporter import (
-    ImageFormat,
-    inject_outline_and_metadata_from_bytes,
-    save_image,
-    save_pdf_bytes,
-)
-from book_cut.io.loader import (
-    PageInfo,
-    get_pdf_metadata,
-    get_pdf_outline,
-    iter_pages,
-)
+from book_cut.io.exporter import ImageFormat, save_image
+from book_cut.io.loader import PageInfo, get_pdf_metadata, get_pdf_outline, iter_pages
 from book_cut.preprocess.binarize import binarize
+
+from book_cut.pipeline.crop_config import _build_crop_config, _resolve_per_page_config
+from book_cut.pipeline.outline import (
+    _resolve_outline_source,
+    _write_pdf_with_outline,
+)
 
 
 def _split_from_array(arr: np.ndarray, strategy: str, auto_single_page: bool = True) -> list:
@@ -115,78 +111,6 @@ def _crop_pages_from_arrays_with_config(
     raise ValueError(f"未知裁切模式: {mode}")
 
 
-def _resolve_per_page_config(
-    sub_arr: np.ndarray,
-    book_config,
-    deviation: float,
-) -> object | None:
-    """v1.5+ per-page override 决策：单张子图用书级还是 per-page config。
-
-    Args:
-        sub_arr: 单张子图灰度 ndarray（已切分后）。
-        book_config: 书级 CropConfig（``None`` → 走 legacy，不 override）。
-        deviation: 偏离阈值（``--paper-deviation``，默认 30）。
-
-    Returns:
-        - ``book_config``：不 override（per-paper 接近 book）
-        - 新 ``CropConfig``：override 触发（保持 padding/ink_offset，仅换 paper_color）
-        - ``None``：legacy 模式（与 book_config=None 对齐）
-    """
-    if book_config is None:
-        return None  # legacy fixed 模式：不 override
-    from book_cut.detect.paper import (
-        CropConfig,
-        estimate_paper_color_from_array,
-        should_override,
-    )
-
-    per_paper = estimate_paper_color_from_array(sub_arr)
-    if not should_override(per_paper, book_config.paper_color, threshold=deviation):
-        return book_config  # 偏离 ≤ 阈值：沿用书级
-
-    # override：保持 padding/ink_offset/min_edge_ink，只换 paper_color
-    # v1.5+ §5.1：padding 不变（视觉一致性），仅 ink_thr 切到 per-page
-    return CropConfig(
-        paper_color=per_paper,
-        ink_offset=book_config.ink_offset,
-        padding=book_config.padding,
-        min_edge_ink=book_config.min_edge_ink,
-    )
-
-
-def _build_crop_config(args, sample_pages: list) -> object | None:
-    """根据 CLI args 构造 ``CropConfig``（或返 ``None`` 走 legacy 路径）。
-
-    行为表：
-    - ``--crop-adaptive fixed`` → 返 ``None``（legacy 阈值 240）
-    - ``--crop-adaptive auto`` 且 ``--paper-pages >= 1`` → 用前 N 页估 book paper color
-    - ``--crop-adaptive auto`` 且 ``--paper-pages 0/1`` → 每页单独估（每次都算）
-    """
-    from book_cut.detect.paper import (
-        aggregate_paper_color,
-        default_crop_config,
-        estimate_paper_color,
-    )
-
-    crop_adaptive: str = getattr(args, "crop_adaptive", "auto")
-    if crop_adaptive == "fixed":
-        return None  # legacy 模式：trim/border 走硬编码 threshold=240
-
-    paper_pages: int = max(0, getattr(args, "paper_pages", 5))
-    if not sample_pages or paper_pages == 0:
-        # 无样页可用：返一个默认 config，每页用 240 (等同 legacy)
-        return default_crop_config(paper_color=240.0)
-
-    sampled = sample_pages[:paper_pages]
-    colors = [estimate_paper_color(p.image) for p in sampled]
-    book_paper = aggregate_paper_color(colors)
-    print(
-        f"[INFO] 自适应裁切: book paper color = {book_paper:.1f} "
-        f"(sampled {len(colors)} pages, raw = {[round(c, 1) for c in colors]})"
-    )
-    return default_crop_config(paper_color=book_paper)
-
-
 def _reverse_pair(sub_pages: list) -> list:
     """RTL 模式：1:2 切分时把 [左, 右] 翻成 [右, 左]。
 
@@ -197,86 +121,14 @@ def _reverse_pair(sub_pages: list) -> list:
     return sub_pages
 
 
-def _resolve_outline_source(input_path: Path) -> tuple[Path | None, bool]:
-    """决定 outline / metadata 的来源 PDF。
-
-    v1.6+ A4：单次目录扫描拿到 (first_pdf, count)，替代原来
-    ``first_pdf_in_folder`` + 手动 ``rglob("*.pdf")`` + ``rglob("*.PDF")``
-    三次扫描。
-
-    Returns:
-        ``(pdf_path, is_folder_multi)``：
-        - 单文件 PDF → ``(path, False)``
-        - 文件夹（含 ≥1 个 PDF）→ ``(first_pdf, True)``（多 PDF 时 log 警告）
-        - 单图 / 文件夹无 PDF → ``(None, False)``
-    """
-    if input_path.is_file() and input_path.suffix.lower() == ".pdf":
-        return input_path, False
-    if input_path.is_dir():
-        first, count = _first_and_count_pdfs(input_path)
-        if first is None:
-            return None, False
-        return first, count > 1
-    return None, False
-
-
-def _first_and_count_pdfs(folder: Path) -> tuple[Path | None, int]:
-    """v1.6+ A4：单次扫描拿第一个 PDF + 计数（替代 ``first_pdf_in_folder`` + 重复 rglob）。
-
-    用 ``rglob("*")`` + ``_is_pdf`` 过滤，与 ``first_pdf_in_folder`` 行为一致
-    （大小写不敏感地识别 .pdf/.PDF）。
-
-    Args:
-        folder: 目录路径。
-
-    Returns:
-        ``(first_pdf, count)``：空目录时 ``(None, 0)``。
-    """
-    from book_cut.io.loader import _is_pdf
-
-    pdfs = sorted(p for p in folder.rglob("*") if p.is_file() and _is_pdf(p))
-    if not pdfs:
-        return None, 0
-    return pdfs[0], len(pdfs)
-
-
-def _write_pdf_with_outline(
-    image_paths: list[Path],
-    pdf_path: Path,
-    toc: list[tuple[int, str, int]],
-    metadata: dict[str, str],
-    mapping: dict[int, list[int]],
-    enabled: bool,
-) -> Path:
-    """写出最终 PDF（v1.5+ B2：全内存，去 tempfile）。
-
-    - ``enabled`` 且有 ``toc`` / ``metadata`` / ``mapping`` → img2pdf 出 bytes
-      → pypdf 从 BytesIO 读 → 注入 outline + metadata → 写 ``pdf_path``
-    - 否则 img2pdf bytes → 直接写 ``pdf_path``
-    """
-    if not (enabled and (toc or metadata) and mapping):
-        pdf_bytes = save_pdf_bytes(image_paths)
-        pdf_path.parent.mkdir(parents=True, exist_ok=True)
-        pdf_path.write_bytes(pdf_bytes)
-        return pdf_path
-
-    pdf_bytes = save_pdf_bytes(image_paths)
-    # producer 追加 book-cut 标识（透传的同时标记出处）
-    meta = dict(metadata)
-    if "/Producer" in meta:
-        meta["/Producer"] = f"{meta['/Producer']}; book-cut {__version__}"
-    else:
-        meta["/Producer"] = f"book-cut {__version__}"
-    return inject_outline_and_metadata_from_bytes(
-        pdf_bytes, pdf_path, toc, meta, mapping
-    )
-
-
 def run_pipeline(args: argparse.Namespace) -> None:
     """根据 CLI args 运行整条流水线（v1.5+ B1：流式）。
 
     关键：不再 ``list(iter_pages(...))``，主循环直接迭代 generator，
     每页 PageInfo 处理完即被 GC，内存从 O(N×page) → O(page)。
+
+    v1.6+ C3：本函数迁到 ``pipeline/orchestrator.py``，outline 与 crop_config
+    拆到独立模块，行为完全不变。
     """
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
