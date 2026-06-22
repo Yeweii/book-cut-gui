@@ -1,5 +1,16 @@
 # CHANGELOG
 
+## [0.1.7] - 2026-06-22 · bug fix
+
+### Fixed
+- **OpenSSL 3.0 legacy provider crash**：在 macOS 启用 PDF 输出（`--pdf`）时，`pypdf` 内部 import `cryptography`，触发 `OpenSSL 3.0's legacy provider failed to load` fatal error（Homebrew `openssl@3` 把 legacy provider 拆为独立 formula，未装时即触发）。修复：`book_cut/__init__.py` 顶部 `os.environ.setdefault("CRYPTOGRAPHY_OPENSSL_NO_LEGACY", "1")`，确保在 cryptography 加载前生效。`setdefault` 不覆盖用户已设值。
+
+### Tests
+- 213 测试全过，无回归
+- outline 注入链路（pypdf → cryptography）4 个 PDF fixture 实测可正常 read
+
+---
+
 ## [0.1.6] - 2026-06-22 · v1.6
 
 ### Performance
