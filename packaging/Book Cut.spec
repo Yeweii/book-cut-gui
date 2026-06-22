@@ -36,6 +36,8 @@ a = Analysis(
         "book_cut.pipeline.crop_config",
         "book_cut.io.loader",
         "book_cut.io.exporter",
+        # v1.7：PDF 页面统一尺寸模块
+        "book_cut.io.page_size",
         "book_cut.split.half",
         "book_cut.split.gutter",
         "book_cut.split.border",
@@ -103,8 +105,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Book Cut",
         "CFBundleDisplayName": "Book Cut",
-        "CFBundleShortVersionString": "0.1.7",
-        "CFBundleVersion": "0.1.7",
+        "CFBundleShortVersionString": "0.1.8",
+        "CFBundleVersion": "0.1.8",
         "NSHighResolutionCapable": True,
         "LSApplicationCategoryType": "public.app-category.graphics-design",
         "NSHumanReadableCopyright": "MIT",
