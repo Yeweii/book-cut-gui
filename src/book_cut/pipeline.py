@@ -55,6 +55,7 @@ def _crop_pages_from_arrays(
     mode: str,
     configs: list | None = None,
     use_morph: bool = True,
+    page_rects: list | None = None,
 ) -> list:
     """v1.5+ A1：对 arr 列表裁切，每张裁成 Image（v1.5+ per-page override）。
 
@@ -64,6 +65,8 @@ def _crop_pages_from_arrays(
         configs: 每张子图对应的 ``CropConfig``（可 ``None`` = legacy 默认）。
             ``None`` → 全部子图用同一个 ``config``（向后兼容）。
         use_morph: v1.6+ B线：trim/border fallback 是否走形态学开运算。
+        page_rects: v1.6+ A3 split_border 缓存的每子图版框 rect。
+            ``None`` 或 ``[None, ...]`` → crop 自跑 Hough。
 
     说明：per-page override 让每张子图独立决策 config（详见
     ``_resolve_per_page_config``）。本函数只做"按 configs 列表逐张裁切"。
@@ -71,26 +74,44 @@ def _crop_pages_from_arrays(
 
     if configs is None:
         # 向后兼容：所有子图用同一 config
-        return _crop_pages_from_arrays_with_config(sub_arrs, mode, None, use_morph=use_morph)
+        return _crop_pages_from_arrays_with_config(
+            sub_arrs, mode, None, use_morph=use_morph, page_rects=page_rects
+        )
     if len(configs) != len(sub_arrs):
         raise ValueError(f"configs 长度 {len(configs)} ≠ sub_arrs 长度 {len(sub_arrs)}")
     out: list = []
-    for a, c in zip(sub_arrs, configs, strict=True):
-        out.extend(_crop_pages_from_arrays_with_config([a], mode, c, use_morph=use_morph))
+    for i, (a, c) in enumerate(zip(sub_arrs, configs, strict=True)):
+        # 每子图对应的 page_rect（v1.6+ A3）
+        sub_rects = [page_rects[i]] if page_rects else None
+        out.extend(
+            _crop_pages_from_arrays_with_config(
+                [a], mode, c, use_morph=use_morph, page_rects=sub_rects
+            )
+        )
     return out
 
 
 def _crop_pages_from_arrays_with_config(
-    sub_arrs: list, mode: str, config, use_morph: bool = True
+    sub_arrs: list, mode: str, config, use_morph: bool = True, page_rects: list | None = None
 ) -> list:
-    """``_crop_pages_from_arrays`` 的内部单 config helper（v1.6+ 加 ``use_morph``）。"""
+    """``_crop_pages_from_arrays`` 的内部单 config helper。
+
+    v1.6+ 加 ``use_morph`` 参数（B线）+ ``page_rects`` 参数（A3 缓存）。
+    """
     from book_cut.detect.border import crop_to_border_from_array
     from book_cut.detect.trim import _trim_margins_from_array
 
     if mode == "trim":
         return [_trim_margins_from_array(a, config=config, use_morph=use_morph) for a in sub_arrs]
     if mode == "border":
-        return [crop_to_border_from_array(a, config=config, use_morph=use_morph) for a in sub_arrs]
+        # v1.6+ A3：page_rects[i] 给 crop 复用 split 阶段的 Hough 结果
+        rects = page_rects if page_rects else [None] * len(sub_arrs)
+        return [
+            crop_to_border_from_array(
+                a, config=config, use_morph=use_morph, page_rect=r
+            )
+            for a, r in zip(sub_arrs, rects, strict=True)
+        ]
     raise ValueError(f"未知裁切模式: {mode}")
 
 
@@ -345,27 +366,44 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
         # 2. 切分（可能产生 1 张单页或 2 张双页）
         offset = getattr(args, "half_offset", 0)
+        # v1.6+ A3：split=border 时用 split_border_with_rects 拿到每页 rect
+        # 给下游 crop 复用 Hough 结果，省一次 Hough（约 4ms/页）
+        page_rects: list | None = None
         if args.split == "half":
             from book_cut.split.half import split_half_from_array
 
             sub_arrs = split_half_from_array(arr, offset=offset)
+        elif args.split == "border":
+            from book_cut.split.border import split_border_with_rects_from_array
+
+            result = split_border_with_rects_from_array(arr)
+            sub_arrs = result.sub_arrays
+            page_rects = result.page_rects
         else:
             sub_arrs = _split_from_array(arr, args.split, auto_single_page=auto_single_page)
 
         # v1.4：RTL 模式下，1:2 切分翻成 [右, 左]
+        # v1.6+ A3：RTL 翻 [sub_arrs, page_rects] 同步
         if page_order == "rtl" and len(sub_arrs) == 2:
             sub_arrs = [sub_arrs[1], sub_arrs[0]]
+            if page_rects is not None:
+                page_rects = [page_rects[1], page_rects[0]]
 
         # 3. 可选：裁切（白边 / 版框内裁）—— arr 路径
         # v1.5+ per-page override：每张子图独立决策 config
         # v1.6+ B线：use_morph 控制形态学（--no-morph 关闭）
+        # v1.6+ A3：page_rects 给 crop 复用 split 阶段的 Hough 结果
         if crop_mode == "none":
             sub_pages = [Image.fromarray(a, mode="L") for a in sub_arrs]
         elif is_sampled_page:
             # 采样页：用书级 config（避免 override 自我引用，proposal §10.2）
             configs = [crop_config] * len(sub_arrs)
             sub_pages = _crop_pages_from_arrays(
-                sub_arrs, crop_mode, configs=configs, use_morph=use_morph
+                sub_arrs,
+                crop_mode,
+                configs=configs,
+                use_morph=use_morph,
+                page_rects=page_rects,
             )
         else:
             # 每张子图独立决策（per-page override）
@@ -374,7 +412,11 @@ def run_pipeline(args: argparse.Namespace) -> None:
                 for a in sub_arrs
             ]
             sub_pages = _crop_pages_from_arrays(
-                sub_arrs, crop_mode, configs=per_page_configs, use_morph=use_morph
+                sub_arrs,
+                crop_mode,
+                configs=per_page_configs,
+                use_morph=use_morph,
+                page_rects=page_rects,
             )
 
         # 4. 可选：二值化 —— 公共 API（内部薄包装对 L 模式图无 convert 开销）
