@@ -14,6 +14,9 @@ v1.6+ B线：
 - **safety margin 贴边保护**：内容距图边 < ``max(5, min(h,w)*0.01)`` → 不裁
 - **min_ink 统一**：legacy `1` → `≥ 3`（与 adaptive 对齐），杀 JPEG 噪声
 - **CLI opt-out**：``--no-morph`` 关闭形态学（古籍飞白/极小字可见时用）
+
+v1.6+ C2：``_default_adaptive_padding`` 重复公式合并到 ``detect._utils.adaptive_padding``；
+``_to_L_image`` / 灰度转换走 ``detect._utils``。本模块不再重复。
 """
 
 from __future__ import annotations
@@ -24,13 +27,18 @@ import cv2
 import numpy as np
 from PIL import Image
 
+from book_cut.detect._utils import adaptive_padding, to_L_image, to_gray_array
+
 if TYPE_CHECKING:
     from book_cut.detect.paper import CropConfig
 
 
 def _to_L_image(arr_u8: np.ndarray) -> Image.Image:
-    """ndarray (uint8) → L mode PIL Image（trim/binarize 共用）。"""
-    return Image.fromarray(arr_u8, mode="L")
+    """ndarray (uint8) → L mode PIL Image（trim/binarize 共用）。
+
+    v1.6+ C2：薄包装到 ``detect._utils.to_L_image``，保留本名供本模块引用。
+    """
+    return to_L_image(arr_u8)
 
 
 def _safety_margin(h: int, w: int) -> int:
@@ -91,7 +99,8 @@ def _trim_margins_from_array(
     # 选择模式：config 优先；否则用 legacy 显式参数；再否则默认 240/10
     if config is not None:
         ink_thr = config.ink_threshold
-        pad = config.padding if config.padding is not None else _default_adaptive_padding(h, w)
+        # v1.6+ C2：padding 兜底公式统一到 ``detect._utils.adaptive_padding``
+        pad = config.padding if config.padding is not None else adaptive_padding(h, w)
         # v1.6+：min_ink 统一 ≥ 3（adaptive 默认即 3，防御性 max 保留）
         min_ink = max(3, config.min_edge_ink)
     else:
@@ -163,21 +172,8 @@ def trim_margins(
     Returns:
         裁切后的图像。
     """
-    if image.mode != "L":
-        gray = image.convert("L")
-    else:
-        gray = image
-    arr = np.asarray(gray)
+    # v1.6+ C2：灰度转换走 ``detect._utils.to_gray_array``（行为等价）
+    arr = to_gray_array(image)
     return _trim_margins_from_array(
         arr, config=config, threshold=threshold, padding=padding, use_morph=use_morph
     )
-
-
-def _default_adaptive_padding(h: int, w: int) -> int:
-    """trim 内部用的 padding 兜底（避免循环 import paper 模块）。
-
-    与 ``detect.paper.adaptive_padding`` 公式一致：
-    ``max(int(min(h, w) * 0.02), 5)``，clamp ≤ 30。
-    """
-    base = int(min(h, w) * 0.02)
-    return max(5, min(30, base))

@@ -4,7 +4,6 @@
 - ``CropConfig``：自适应裁切参数集合（paper_color、ink_offset、padding、min_edge_ink）
 - ``estimate_paper_color``：单页 paper color 估计（95th percentile，clip [180, 255]）
 - ``aggregate_paper_color``：多页 → 书级 paper color（median）
-- ``adaptive_padding``：按图像尺寸比例算 padding
 - ``default_crop_config``：工厂函数
 - ``_column_is_white``（v1.6+）：列白度双判据，gutter 抗伤字用
 
@@ -12,6 +11,8 @@
 - **95th percentile** 比 median 抗浓墨（cover 50% 浓墨仍返 255）；比 Otsu 简单。
 - **median 聚合** 抗单页异常（一页 cover 不会拉低书级）。
 - **CropConfig frozen=True** 保证 hashable，方便测试与将来缓存。
+
+v1.6+ C2：``adaptive_padding`` 和 ``to_gray_array`` 移到 ``detect._utils``，本模块不再重复。
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ from dataclasses import dataclass
 
 import numpy as np
 from PIL import Image
+
+from book_cut.detect._utils import adaptive_padding, to_gray_array
 
 
 @dataclass(frozen=True)
@@ -58,11 +61,7 @@ def estimate_paper_color(image: Image.Image) -> float:
     Returns:
         paper color ∈ [180, 255]。空图返 255.0。
     """
-    if image.mode != "L":
-        gray = image.convert("L")
-    else:
-        gray = image
-    arr = np.asarray(gray)
+    arr = to_gray_array(image)
     return estimate_paper_color_from_array(arr)
 
 
@@ -147,26 +146,6 @@ def aggregate_paper_color(colors: list[float]) -> float:
     if len(colors) == 1:
         return float(colors[0])
     return float(np.median(colors))
-
-
-def adaptive_padding(h: int, w: int) -> int:
-    """按图像尺寸算自适应 padding。
-
-    公式：``max(int(min(h, w) * 0.02), 5)``，clamp 到 ≤ 30。
-    - 700px 短边 → 14px
-    - 1500px → 30px (cap)
-    - 4000px → 30px (cap)
-    - 小于 250px → 5px (floor)
-
-    Args:
-        h: 图像高。
-        w: 图像宽。
-
-    Returns:
-        像素 padding。
-    """
-    base = int(min(h, w) * 0.02)
-    return max(5, min(30, base))
 
 
 def default_crop_config(paper_color: float | None = None) -> CropConfig:
