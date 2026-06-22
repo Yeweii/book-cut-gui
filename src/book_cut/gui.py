@@ -17,6 +17,53 @@ from book_cut.pipeline import run_pipeline
 PAGE_ORDER_LABELS: tuple[str, ...] = ("先左后右", "先右后左")
 PAGE_ORDER_MAP: dict[str, str] = {"先左后右": "ltr", "先右后左": "rtl"}
 
+
+# ----------------------------------------------------------------------------
+# v1.6+ E1+E3：UI 联动 + 友好错误提示（无 Tk 依赖的纯函数，方便单测）
+# ----------------------------------------------------------------------------
+
+
+def _suggest_output_dir(input_path: str) -> str | None:
+    """根据输入路径建议输出目录（E1b）。
+
+    规则：
+    - 空 / 不存在 → ``None``（调用方不改动 output）
+    - 文件 → ``{parent}/{stem}_out``
+    - 目录 → ``{parent}/{name}_out``
+
+    调用方应在 ``output_var`` 为空时才填充，避免覆盖用户手动设置。
+    """
+    if not input_path:
+        return None
+    p = Path(input_path)
+    if not p.exists():
+        return None
+    if p.is_file():
+        return str(p.parent / f"{p.stem}_out")
+    return str(p.parent / f"{p.name}_out")
+
+
+# E3：常见异常 → 中文友好提示（原始 exc 作为 hint 附后）
+_FRIENDLY_ERRORS: tuple[tuple[type, str], ...] = (
+    (FileNotFoundError, "❌ 找不到文件，请检查输入路径是否正确"),
+    (NotADirectoryError, "❌ 路径不是目录（输出目录必须是目录）"),
+    (IsADirectoryError, "❌ 路径是目录而非文件"),
+    (PermissionError, "❌ 没有访问权限，请检查文件/目录权限或是否被其他程序占用"),
+)
+
+
+def _format_error(exc: BaseException) -> str:
+    """把异常转成中文友好提示（E3）。
+
+    已知异常 → 命中映射表，原始信息作为 hint 附后（用户可调试）。
+    未知异常 → 通用兜底 + 原始 ``type: message``。
+    """
+    for exc_type, hint in _FRIENDLY_ERRORS:
+        if isinstance(exc, exc_type):
+            return f"{hint}\n\n详细信息：{type(exc).__name__}: {exc}"
+    return f"❌ 处理出错\n\n详细信息：{type(exc).__name__}: {exc}"
+
+
 # ----------------------------------------------------------------------------
 # 后台 worker
 # ----------------------------------------------------------------------------
@@ -53,7 +100,7 @@ def _run_pipeline_thread(
         run_pipeline(args)
         log_queue.put(("done", "✅ 处理完成"))
     except Exception as e:  # noqa: BLE001
-        log_queue.put(("error", f"❌ {e}"))
+        log_queue.put(("error", _format_error(e)))
     finally:
         sys.stdout, sys.stderr = old_out, old_err
 
@@ -117,6 +164,16 @@ def run_gui() -> None:
             input_var.set(path)
 
     ttk.Button(root, text="浏览…", command=browse_input).grid(row=1, column=2, **pad)
+
+    # v1.6+ E1b：input 变化时，若 output 为空则自动建议
+    def _on_input_change(*_args: object) -> None:
+        if output_var.get():
+            return  # 用户已手动填 output，不覆盖
+        suggested = _suggest_output_dir(input_var.get())
+        if suggested:
+            output_var.set(suggested)
+
+    input_var.trace_add("write", _on_input_change)
 
     # 输出
     ttk.Label(root, text="输出目录:").grid(row=2, column=0, sticky="e", **pad)
@@ -183,11 +240,19 @@ def run_gui() -> None:
 
     # v1.6+ B线：抗杂质（默认开，对应 CLI ``--no-morph`` 反义）
     morph_var = tk.BooleanVar(value=True)
-    ttk.Checkbutton(
+    morph_check = ttk.Checkbutton(
         crop_frame,
         text="抗杂质（形态学清尘点）",
         variable=morph_var,
-    ).grid(row=1, column=0, columnspan=4, sticky="w", padx=(0, 4), pady=(4, 0))
+    )
+    morph_check.grid(row=1, column=0, columnspan=4, sticky="w", padx=(0, 4), pady=(4, 0))
+
+    # v1.6+ E1a：crop=none 时抗杂质无意义，禁用 checkbox
+    def _on_crop_change(*_args: object) -> None:
+        morph_check.config(state="disabled" if crop_var.get() == "none" else "normal")
+
+    crop_var.trace_add("write", _on_crop_change)
+    _on_crop_change()  # 初始化时跑一次对齐默认状态
 
     # 二值化
     ttk.Label(root, text="二值化:").grid(row=6, column=0, sticky="e", **pad)
