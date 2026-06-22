@@ -4,6 +4,11 @@ from __future__ import annotations
 
 import argparse
 
+from book_cut.io.page_size import (
+    PDF_PAGE_SIZE_CHOICES,
+    PDF_PAGE_UNIT_CHOICES,
+)
+
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -88,6 +93,26 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         default=True,
         help="关闭 PDF outline（书签）/ metadata 透传（仅 --pdf 模式有效；兜底用）",
+    )
+    # v1.7：PDF 页面统一尺寸
+    parser.add_argument(
+        "--pdf-page-size",
+        choices=PDF_PAGE_SIZE_CHOICES,
+        default="keep",
+        help="PDF 页面统一尺寸（v1.7+；仅 --pdf 模式生效）："
+        "keep=保持原图分辨率（默认）/ max=所有页 max(W)×max(H) / "
+        "first=首页尺寸 / a4 / a5 / letter / legal / custom=配合 --pdf-page-dim+--pdf-page-unit",
+    )
+    parser.add_argument(
+        "--pdf-page-dim",
+        default=None,
+        help='PDF 页面自定义尺寸 "WxH"（如 280x200；仅 --pdf-page-size custom 时生效）',
+    )
+    parser.add_argument(
+        "--pdf-page-unit",
+        choices=PDF_PAGE_UNIT_CHOICES,
+        default="mm",
+        help="自定义尺寸单位（仅 --pdf-page-size custom 时生效；默认 mm）",
     )
     parser.add_argument(
         "--format",

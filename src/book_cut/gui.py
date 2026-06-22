@@ -11,11 +11,33 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from book_cut import __version__
+from book_cut.io.page_size import (
+    PDF_PAGE_SIZE_CHOICES,
+    PDF_PAGE_UNIT_CHOICES,
+)
 from book_cut.pipeline import run_pipeline
 
 # v1.4：GUI 用中文显示，映射到 CLI 的 ltr/rtl 值
 PAGE_ORDER_LABELS: tuple[str, ...] = ("先左后右", "先右后左")
 PAGE_ORDER_MAP: dict[str, str] = {"先左后右": "ltr", "先右后左": "rtl"}
+
+# v1.7：PDF 页面统一尺寸（GUI 显示用中文，CLI 用 token）
+PDF_PAGE_SIZE_LABELS: tuple[str, ...] = (
+    "保持原图",
+    "取最大",
+    "首页尺寸",
+    "A4",
+    "A5",
+    "Letter",
+    "Legal",
+    "自定义",
+)
+PDF_PAGE_SIZE_MAP: dict[str, str] = dict(zip(PDF_PAGE_SIZE_LABELS, PDF_PAGE_SIZE_CHOICES, strict=True))
+
+# 单位下拉（中文显示 → CLI token）
+PDF_PAGE_UNIT_LABELS: tuple[str, ...] = ("毫米 (mm)", "厘米 (cm)", "英寸 (inch)", "像素 (px)")
+PDF_PAGE_UNIT_MAP: dict[str, str] = dict(zip(PDF_PAGE_UNIT_LABELS, PDF_PAGE_UNIT_CHOICES, strict=True))
+PDF_PAGE_UNIT_REVERSE_MAP: dict[str, str] = {v: k for k, v in PDF_PAGE_UNIT_MAP.items()}
 
 
 # ----------------------------------------------------------------------------
@@ -301,6 +323,62 @@ def run_gui() -> None:
         row=0, column=2
     )
 
+    # v1.7：PDF 页面统一尺寸（放在 PDF 选项下一行）
+    pps_frame = ttk.Frame(fmt_frame)
+    pps_frame.grid(row=1, column=0, columnspan=3, sticky="w", pady=(4, 0))
+    ttk.Label(pps_frame, text="PDF 页面尺寸:").grid(row=0, column=0)
+    pps_var = tk.StringVar(value=PDF_PAGE_SIZE_LABELS[0])
+    pps_unit_var = tk.StringVar(value=PDF_PAGE_UNIT_LABELS[0])
+    pps_w_var = tk.StringVar(value="280")
+    pps_h_var = tk.StringVar(value="200")
+    pps_combo = ttk.Combobox(
+        pps_frame,
+        textvariable=pps_var,
+        values=list(PDF_PAGE_SIZE_LABELS),
+        state="readonly",
+        width=10,
+    )
+    pps_combo.grid(row=0, column=1, padx=(2, 8))
+    ttk.Label(pps_frame, text="W:").grid(row=0, column=2)
+    pps_w_entry = ttk.Entry(pps_frame, textvariable=pps_w_var, width=6)
+    pps_w_entry.grid(row=0, column=3, padx=(2, 4))
+    ttk.Label(pps_frame, text="H:").grid(row=0, column=4)
+    pps_h_entry = ttk.Entry(pps_frame, textvariable=pps_h_var, width=6)
+    pps_h_entry.grid(row=0, column=5, padx=(2, 4))
+    pps_unit_combo = ttk.Combobox(
+        pps_frame,
+        textvariable=pps_unit_var,
+        values=list(PDF_PAGE_UNIT_LABELS),
+        state="readonly",
+        width=10,
+    )
+    pps_unit_combo.grid(row=0, column=6, padx=(2, 0))
+
+    def _on_pps_change(*_args: object) -> None:
+        """PDF 页面尺寸下拉变化：custom 启用 W/H/unit，其他禁用。"""
+        is_custom = pps_var.get() == "自定义"
+        state_w = "normal" if is_custom else "disabled"
+        pps_w_entry.config(state=state_w)
+        pps_h_entry.config(state=state_w)
+        pps_unit_combo.config(state="readonly" if is_custom else "disabled")
+
+    pps_var.trace_add("write", _on_pps_change)
+    _on_pps_change()  # 初始化时对齐默认状态
+
+    # v1.7：PDF 未勾选时整行禁用（与 PDF 配套）
+    def _on_pdf_change(*_args: object) -> None:
+        pps_combo.config(state="readonly" if pdf_var.get() else "disabled")
+        # W/H/unit 由 _on_pps_change 控制，仅在 PDF 勾选时才有意义
+        if not pdf_var.get():
+            pps_w_entry.config(state="disabled")
+            pps_h_entry.config(state="disabled")
+            pps_unit_combo.config(state="disabled")
+        else:
+            _on_pps_change()  # 重新触发按 custom/non-custom 切换
+
+    pdf_var.trace_add("write", _on_pdf_change)
+    _on_pdf_change()  # 初始化时跑一次对齐默认状态
+
     # 进度条
     progress = ttk.Progressbar(root, mode="indeterminate")
     progress.grid(row=8, column=0, columnspan=3, sticky="ew", padx=8, pady=(12, 4))
@@ -332,6 +410,10 @@ def run_gui() -> None:
             "page_order": PAGE_ORDER_MAP[order_var.get()],
             "outline": outline_var.get(),
             "no_morph": not morph_var.get(),
+            # v1.7：PDF 页面统一尺寸
+            "pdf_page_size": PDF_PAGE_SIZE_MAP[pps_var.get()],
+            "pdf_page_dim": f"{pps_w_var.get()}x{pps_h_var.get()}",
+            "pdf_page_unit": PDF_PAGE_UNIT_MAP[pps_unit_var.get()],
         }
         t = threading.Thread(
             target=_run_pipeline_thread,

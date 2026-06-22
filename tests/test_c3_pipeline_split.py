@@ -103,13 +103,17 @@ def test_c3_init_does_not_reexport_unstable_helpers():
 # ============ 行数约束 ============
 
 
-def test_c3_orchestrator_line_count_under_350():
-    """C3：``orchestrator.py`` < 350 行（仍比原 455 行单文件短）。"""
+def test_c3_orchestrator_line_count_under_400():
+    """C3：``orchestrator.py`` < 400 行（仍比原 455 行单文件短）。
+
+    v1.7：阈值从 350 提到 400 —— 新增 PDF 页面尺寸 max/first 预扫 + fit 步骤
+    约 +50 行（用 docstring 解释分支，方便单测读懂）。
+    """
     from pathlib import Path
 
     p = Path(__file__).parent.parent / "src" / "book_cut" / "pipeline" / "orchestrator.py"
     lines = sum(1 for _ in p.open())
-    assert lines < 350, f"orchestrator.py 应 < 350 行，实际 {lines}"
+    assert lines < 400, f"orchestrator.py 应 < 400 行，实际 {lines}"
 
 
 def test_c3_outline_line_count_under_150():
@@ -140,8 +144,9 @@ def test_c3_split_saves_total_lines():
         for f in ["__init__.py", "orchestrator.py", "outline.py", "crop_config.py"]
     )
     # 拆分后总行数 ≈ 原 455（拆出来 docstring + re-import 抵消了部分节省）
-    # 但单文件 < 350，最大拆分价值
-    assert total < 600, f"拆分后总行数 {total} 超过预算 600（原 455）"
+    # v1.7：阈值从 600 提到 700 —— orchestrator 加了 max/first 预扫 + fit
+    # 但单文件 < 400，最大拆分价值
+    assert total < 700, f"拆分后总行数 {total} 超过预算 700（原 455）"
     assert total > 400, f"拆分后总行数 {total} 异常少"
 
 

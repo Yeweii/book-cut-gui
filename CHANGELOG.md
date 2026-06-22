@@ -1,5 +1,28 @@
 # CHANGELOG
 
+## [0.1.8] - 2026-06-22 · v1.7
+
+### Added
+- **PDF 页面统一尺寸 `--pdf-page-size`**：古籍扫描件合并 PDF 时所有页 page size 一致，避免"封面 3708×3862 / 文本 3424×3330 / 插图页 4288×3330"在 PDF 阅读器里大小跳变
+  - `keep`（默认）= 保持 v1.6 行为（零侵入）
+  - `max` = 所有输入页 `max(W) × max(H)`（流式预扫，PDF 133 页 < 100ms）
+  - `first` = 首页尺寸
+  - `a4` / `a5` / `letter` / `legal` = 标准预设（96 DPI）
+  - `custom` = 自定义（`--pdf-page-dim WxH` + `--pdf-page-unit mm/cm/inch/px`）
+- 图片 fit 策略：等比 fit + 居中 paste + 留白填 255（白）；mode 跟随子图（L / RGB）
+- 仅 `--pdf` 模式生效；非 PDF 模式 → 警告后忽略（图片输出保持原分辨率）
+- GUI 联动：combobox 选 `custom` → W/H/unit 三个输入框 enable；PDF checkbox 关闭 → 整行 disable
+
+### Tests
+- 测试套件 **213 → 228**（+15）
+- 8 解析 + 4 fit + 2 实际 PDF mediabox（a4=595.5×842.25 pt / max=600×525 pt）+ 1 choice 校验
+- 213 老测试零回归
+
+### Note
+- `pipeline/orchestrator.py` 行数阈值 C3 从 350 提到 400（v1.7 加了 max/first 预扫 + fit 步骤约 +50 行）
+
+---
+
 ## [0.1.7] - 2026-06-22 · bug fix
 
 ### Fixed

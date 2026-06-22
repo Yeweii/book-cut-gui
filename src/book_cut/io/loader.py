@@ -155,3 +155,62 @@ def iter_pages(source: str | Path) -> Iterator[PageInfo]:
     if _is_image(path):
         return _iter_image_file(path)
     raise ValueError(f"不支持的输入类型: {path}")
+
+
+# ----------------------------------------------------------------------------
+# v1.7 新增：流式产出每页 (width, height)，仅取尺寸不渲染
+# ----------------------------------------------------------------------------
+
+
+def _iter_pdf_page_sizes(pdf_path: Path) -> Iterator[tuple[int, int]]:
+    """流式产出 PDF 每页 ``(width_pt, height_pt)``，不渲染。
+
+    PDF ``Page.rect.width/height`` 单位是 points（1pt = 1/72 in）。
+    """
+    import pymupdf
+
+    doc = pymupdf.open(pdf_path)
+    try:
+        for page in doc:
+            r = page.rect
+            yield (int(r.width), int(r.height))
+    finally:
+        doc.close()
+
+
+def _iter_image_page_sizes(path: Path) -> Iterator[tuple[int, int]]:
+    """产出单图 ``(width_px, height_px)``，不实际 load 像素。"""
+    with Image.open(path) as img:
+        yield (img.width, img.height)
+
+
+def iter_page_sizes(source: str | Path) -> Iterator[tuple[int, int]]:
+    """v1.7：流式产出每页 ``(width, height)``，供 ``--pdf-page-size max`` 预扫。
+
+    - PDF: ``pymupdf.Page.rect.width/height``（points，1pt = 1/72 in）—— **不渲染**
+    - 图片: ``Image.open(path).size`` 后 close（不实际 load 像素）
+    - 文件夹: 递归（PDF 先按文件名，再图片按文件名，与 ``iter_pages`` 一致）
+
+    为什么不直接复用 ``iter_pages``：那个会全量渲染成 RGB Image，对只需要尺寸
+    的场景（max 预扫）慢 100×+。
+    """
+    path = Path(source)
+    if not path.exists():
+        raise FileNotFoundError(f"输入路径不存在: {path}")
+
+    if path.is_dir():
+        # 与 _iter_folder 一致：先 PDF 再图片
+        pdfs = sorted(p for p in path.rglob("*") if p.is_file() and _is_pdf(p))
+        images = sorted(p for p in path.rglob("*") if p.is_file() and _is_image(p))
+        for p in pdfs:
+            yield from _iter_pdf_page_sizes(p)
+        for p in images:
+            yield from _iter_image_page_sizes(p)
+        return
+    if _is_pdf(path):
+        yield from _iter_pdf_page_sizes(path)
+        return
+    if _is_image(path):
+        yield from _iter_image_page_sizes(path)
+        return
+    raise ValueError(f"不支持的输入类型: {path}")

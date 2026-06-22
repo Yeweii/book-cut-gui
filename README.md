@@ -66,6 +66,9 @@ python -m book_cut --gui
 | `--pdf` | 关 | 同时输出合并 PDF |
 | `--page-order` | `ltr` | 1:2 切分时输出顺序：`ltr`=左先右后 / `rtl`=右先左后（古籍竖排常用） |
 | `--no-outline` | 关 | 关闭 PDF outline（书签）/ metadata 透传（仅 `--pdf` 模式有效；兜底用） |
+| `--pdf-page-size` | `keep` | PDF 页面统一尺寸（v1.7+；仅 `--pdf` 模式有效）：`keep`=保持原图 / `max`=所有页 max(W)×max(H) / `first`=首页 / `a4` / `a5` / `letter` / `legal` / `custom`（配 `--pdf-page-dim` + `--pdf-page-unit`） |
+| `--pdf-page-dim` | 无 | 自定义尺寸 `WxH`（如 `280x200`；仅 `--pdf-page-size custom`） |
+| `--pdf-page-unit` | `mm` | 自定义尺寸单位 `mm` / `cm` / `inch` / `px`（仅 custom） |
 | `--gui` | 关 | 启动 GUI |
 
 ### Python API
@@ -151,6 +154,32 @@ GUI 在"输出格式"行多了 **页序** 下拉（**先左后右** / **先右�
 
 实现：img2pdf 出无 outline 中间 PDF → pypdf 后处理注入 outline + metadata → 覆盖。复用 img2pdf 的"无损"特性，新增依赖只有 ~1MB 的纯 Python `pypdf`。
 
+## PDF 页面统一尺寸（v1.7+）
+
+当输入是扫描件（PDF / 嵌套图片）且开了 `--pdf` 时，book-cut 默认让**每页 page size 用图原分辨率**——结果同本书内封面 3708×3862、文本 3424×3330、插图页 4288×3330，PDF 阅读器里每页大小都不同，缩放阅读体验差。`--pdf-page-size` 选项解决此问题：
+
+- `keep`（默认）= 保持 v1.6 行为，零侵入
+- `max` = 预扫所有输入页取 `max(W) × max(H)`（PDF 133 页 < 100ms 流式）
+- `first` = 首页尺寸
+- `a4` / `a5` / `letter` / `legal` = 标准预设
+- `custom` = 自定义（`--pdf-page-dim 280x200 --pdf-page-unit mm`）
+
+实现：在每张子图保存前，等比 fit + 居中 paste 到目标 `(W, H)` 画布（留白填白）。`img2pdf` 默认按 96 DPI 把像素换算到 points（A4 794×1123 px → 595.5×842.25 pt，PDF 阅读器标准 A4）。
+
+```bash
+# 全部页统一到 A4（古籍按 A4 打印友好）
+python -m book_cut -i book.pdf -o out --split gutter --binarize sauvola --pdf --pdf-page-size a4
+
+# 取所有页 max(W)×max(H)（保证图不被放大）
+python -m book_cut -i book.pdf -o out --split border --pdf --pdf-page-size max
+
+# 自定义 280×200 mm（仿古线装书）
+python -m book_cut -i book.pdf -o out --split gutter --pdf \
+    --pdf-page-size custom --pdf-page-dim 280x200 --pdf-page-unit mm
+```
+
+**作用域**：仅 `--pdf` 模式生效；非 PDF 模式 → 警告后忽略（图片输出保持原分辨率）。GUI 在"输出格式"下一行多了 **PDF 页面尺寸** 下拉 + 选 `自定义` 时启用 W/H/unit 三个输入框；PDF checkbox 关闭 → 整行 disable。
+
 ## 项目结构
 
 ```
@@ -200,6 +229,7 @@ open "dist/Book Cut.app"            # 启动 GUI
 
 ## 路线图
 
+- v1.7 (2026-06-22)：PDF 页面统一尺寸 `--pdf-page-size`（max/first/A4/A5/Letter/Legal/custom）
 - v1.6 (2026-06-22)：split-crop 抗伤字/抗杂质；Hough 缓存联动（A3）；Sauvola 原地写（B3）；pipeline 拆 3 模块（C3）；paper/trim 共享 utils（C2）；GUI UX 改进（E1+E3）
 - v1.5 (2026-06-21)：per-page paper color override；流式 iter_pages（O(N×page) → O(page)）；outline 注入全内存
 - v1.4 (2026-06-21)：PDF outline / metadata 透传；新增 `--page-order` + `--no-outline`

@@ -21,14 +21,24 @@ from PIL import Image
 from tqdm import tqdm
 
 from book_cut.io.exporter import ImageFormat, save_image
-from book_cut.io.loader import PageInfo, get_pdf_metadata, get_pdf_outline, iter_pages
-from book_cut.preprocess.binarize import binarize
-
+from book_cut.io.loader import (
+    PageInfo,
+    get_pdf_metadata,
+    get_pdf_outline,
+    iter_page_sizes,
+    iter_pages,
+)
+from book_cut.io.page_size import (
+    PDF_PAGE_SIZE_CHOICES,
+    fit_to_canvas,
+    parse_page_size_px,
+)
 from book_cut.pipeline.crop_config import _build_crop_config, _resolve_per_page_config
 from book_cut.pipeline.outline import (
     _resolve_outline_source,
     _write_pdf_with_outline,
 )
+from book_cut.preprocess.binarize import binarize
 
 
 def _split_from_array(arr: np.ndarray, strategy: str, auto_single_page: bool = True) -> list:
@@ -143,7 +153,57 @@ def run_pipeline(args: argparse.Namespace) -> None:
     outline_enabled: bool = getattr(args, "outline", True)  # v1.4 新增
     # v1.6+ B线：--no-morph 关闭形态学（古籍飞白/极小字可见时用）
     use_morph: bool = not getattr(args, "no_morph", False)
+    # v1.7 新增：PDF 页面统一尺寸（默认 keep = 保持原图分辨率）
+    pdf_page_size: str = getattr(args, "pdf_page_size", "keep")
     book_name = input_path.stem if input_path.is_file() else input_path.name
+
+    # v1.7：决定 (target_w, target_h) —— None 表示 keep（不统一）。
+    # 非 PDF 模式 → None（图片输出保持原分辨率）
+    target_size: tuple[int, int] | None = None
+    if pdf_page_size != "keep":
+        if not getattr(args, "pdf", False):
+            print(
+                f"[WARN] --pdf-page-size={pdf_page_size} 仅在 --pdf 模式生效；"
+                "图片输出保持原分辨率"
+            )
+        else:
+            if pdf_page_size in {"a4", "a5", "letter", "legal", "custom"}:
+                target_size = parse_page_size_px(
+                    pdf_page_size,
+                    dim=getattr(args, "pdf_page_dim", None),
+                    unit=getattr(args, "pdf_page_unit", "mm"),
+                )
+            elif pdf_page_size in {"max", "first"}:
+                # 先用 iter_page_sizes 流式预扫
+                # iter_page_sizes 不会被 islice 消耗（独立于 page_iter）
+                # max：所有页中 max(W) × max(H)
+                # first：第 1 页的尺寸
+                w_max = 0
+                h_max = 0
+                first_w = first_h = 0
+                seen = 0
+                for w, h in iter_page_sizes(args.input):
+                    if seen == 0:
+                        first_w, first_h = w, h
+                    if w > w_max:
+                        w_max = w
+                    if h > h_max:
+                        h_max = h
+                    seen += 1
+                if seen == 0:
+                    # 输入无页（防御，与下方"先 peek 第一页"行为一致）
+                    pass
+                else:
+                    if pdf_page_size == "max":
+                        target_size = (w_max, h_max)
+                        print(f"[INFO] --pdf-page-size max → ({w_max}, {h_max})")
+                    else:  # first
+                        target_size = (first_w, first_h)
+                        print(f"[INFO] --pdf-page-size first → ({first_w}, {first_h})")
+            else:
+                raise ValueError(
+                    f"未知 --pdf-page-size: {pdf_page_size!r}（合法: {PDF_PAGE_SIZE_CHOICES}）"
+                )
 
     # v1.5+ B1：流式 iterator（不再 list 物化整本书）
     page_iter = iter_pages(args.input)
@@ -281,6 +341,9 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
         for p in sub_pages:
             counter += 1
+            # v1.7：fit-to-target（target_size is None → keep 原图）
+            if target_size is not None and p.size != target_size:
+                p = fit_to_canvas(p, target_size[0], target_size[1])
             image_paths.append(save_image(p, output_dir, book_name, counter, fmt=fmt))
 
     # 采样阶段用了前 paper_pages_n 页（islice chain 顺序保证）。
