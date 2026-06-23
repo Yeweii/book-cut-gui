@@ -69,6 +69,9 @@ python -m book_cut --gui
 | `--pdf-page-size` | `keep` | PDF 页面统一尺寸（v1.7+；仅 `--pdf` 模式有效）：`keep`=保持原图 / `max`=所有页 max(W)×max(H) / `first`=首页 / `a4` / `a5` / `letter` / `legal` / `custom`（配 `--pdf-page-dim` + `--pdf-page-unit`） |
 | `--pdf-page-dim` | 无 | 自定义尺寸 `WxH`（如 `280x200`；仅 `--pdf-page-size custom`） |
 | `--pdf-page-unit` | `mm` | 自定义尺寸单位 `mm` / `cm` / `inch` / `px`（仅 custom） |
+| `--dry-run` | 关 | 预览模式（v1.8+）：不写实际输出，仅跑前 N 页出对比图 + 指标 JSON。写盘 flag 全部 warn 后忽略 |
+| `--sample-n` | `3` | dry-run 采样页数（仅 `--dry-run` 生效；最小 1） |
+| `--preview-output` | 系统 tmpdir | 预览输出目录（仅 `--dry-run` 生效） |
 | `--gui` | 关 | 启动 GUI |
 
 ### Python API
@@ -180,6 +183,49 @@ python -m book_cut -i book.pdf -o out --split gutter --pdf \
 
 **作用域**：仅 `--pdf` 模式生效；非 PDF 模式 → 警告后忽略（图片输出保持原分辨率）。GUI 在"输出格式"下一行多了 **PDF 页面尺寸** 下拉 + 选 `自定义` 时启用 W/H/unit 三个输入框；PDF checkbox 关闭 → 整行 disable。
 
+## Dry-Run 预览模式（v1.8+）
+
+调参时不再"盲跑 130 页 20 秒"—— `--dry-run` 走前 N 页（默认 3）全流水线，输出**对比拼图 + 指标 JSON**：
+
+```bash
+# 启用 dry-run + 默认采样 3 页
+python -m book_cut -i book.pdf -o ./out --split gutter --binarize sauvola --dry-run
+
+# 显式指定采样数 + 预览输出位置
+python -m book_cut -i book.pdf -o ./out --dry-run --sample-n 5 --preview-output ./preview
+
+# 与现有调参 flag 全兼容
+python -m book_cut -i book.pdf -o ./out --dry-run --sample-n 3 \
+    --deskew --split border --crop border --binarize sauvola
+```
+
+| 新增 flag | 默认 | 说明 |
+|-----------|------|------|
+| `--dry-run` | 关 | 启用预览模式；不写真图/PDF |
+| `--sample-n N` | 3 | 采样页数（PDF = 前 N 页 / 文件夹 = 前 N 文件 / 单图 = N=1 自动） |
+| `--preview-output DIR` | 系统 tmpdir `book-cut-preview-<ts>` | 预览图 + JSON 落盘位置 |
+
+**作用域规则**：
+- `--dry-run` 开启 → `--pdf` / `--format` / `--pdf-page-size` / `--no-outline` 等**写盘 flag** 全部 warn 后忽略
+- `output` 目录**不会被创建**（避免污染用户文件系统）
+- 预览目录默认在系统 tmpdir，带时间戳避免冲突
+
+**输出结构**：
+```
+book-cut-preview-20260623-153022/
+├── preview_p0001_compare.png   # 第 1 页对比拼图
+├── preview_p0002_compare.png
+├── preview_p0003_compare.png
+├── preview_summary.json        # 汇总 + 调参建议
+└── README.txt
+```
+
+**对比拼图**：3 列（原图 | L | R）并排，红色虚线标记 split column。等高对齐 + 总宽 ≤ 6000px。
+
+**指标 JSON**：每页 split confidence / crop boxes / binarize params / timings_ms / warnings，外加 `suggestion` 字段（自动调参建议，例 "page 2 confidence 0.42 偏低，建议 --split border"）。
+
+GUI：在"二值化"行右侧加 **Dry-run 预览（不写盘）** checkbox + **采样: N 页** spinner；勾选时整张"输出格式"行 disable；执行后 **打开预览目录** 按钮 enable。
+
 ## 项目结构
 
 ```
@@ -229,6 +275,7 @@ open "dist/Book Cut.app"            # 启动 GUI
 
 ## 路线图
 
+- v1.8 (2026-06-23)：Dry-run 预览模式 `--dry-run` / `--sample-n` / `--preview-output`；对比拼图 + split confidence + 自动调参建议
 - v1.7 (2026-06-22)：PDF 页面统一尺寸 `--pdf-page-size`（max/first/A4/A5/Letter/Legal/custom）
 - v1.6 (2026-06-22)：split-crop 抗伤字/抗杂质；Hough 缓存联动（A3）；Sauvola 原地写（B3）；pipeline 拆 3 模块（C3）；paper/trim 共享 utils（C2）；GUI UX 改进（E1+E3）
 - v1.5 (2026-06-21)：per-page paper color override；流式 iter_pages（O(N×page) → O(page)）；outline 注入全内存
@@ -237,8 +284,8 @@ open "dist/Book Cut.app"            # 启动 GUI
 - v1.2 (2026-06-21)：PyInstaller 打包成 macOS .app
 
 未来可选：
-- v1.5 候选：PDF page labels（罗马数字）拆分；多 PDF outline 智能合并
-- v2 候选：方向 padding（天/地/内/外）；自动 OCR 识别书名；Deep learning 版框检测
+- v1.9 候选：summary.suggestion 智能化（基于 confidence + paper color 偏差 + crop box 长宽比异常 → 自动建议下轮调参）；GUI 拼图内嵌预览
+- v2 候选：方向 padding（天/地/内/外）；自动 OCR 识别书名；Deep learning 版框检测；Windows .exe 打包
 
 ## 许可
 

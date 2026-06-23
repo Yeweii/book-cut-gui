@@ -1,5 +1,32 @@
 # CHANGELOG
 
+## [0.1.9] - 2026-06-23 · v1.8
+
+### Added
+- **Dry-Run 预览模式** `--dry-run`：调参神器 —— 不写实际输出，仅跑前 N 页（默认 3）出对比拼图 + 指标 JSON
+  - `--sample-n N`（默认 3）：采样页数
+  - `--preview-output DIR`：预览输出目录（默认系统 tmpdir 带时间戳）
+- **对比拼图**（`pipeline/preview.py`）：3 列（原图 | L | R）并排 + 红色虚线标记 split column + 等高对齐 + 总宽 ≤ 6000px
+- **指标 JSON**（`preview_summary.json`）：包含 total_pages / sampled_pages / sample_indices / config / elapsed_ms / paper_color_estimate / pages 数组（每页 split confidence / crop boxes / binarize params / timings_ms / warnings）+ 自动调参建议
+- **split confidence 量化**（`_compute_split_confidence`）：gutter 偏离中心 > 20% → 0；border 子图太小 → 0.3；half → 1.0
+- 与 `--pdf` / `--format` / `--pdf-page-size` / `--no-outline` 写盘 flag 互斥（warn 后忽略）
+- GUI 联动：勾选 Dry-run → 整张"输出格式"行 disable + 采样页 spinner enable；执行后 → "打开预览目录" 按钮 enable
+
+### Refactor
+- **C3 续**：`orchestrator.py` 抽出 `_compute_page`（纯计算）+ `_save_subpages`（写盘），dry-run 主体迁到 `pipeline/dry_run.py`（142 行）
+- 新模块：`pipeline/preview.py`（272 行）— `render_compare` / `write_preview` / `compute_summary`
+
+### Tests
+- 测试套件 **228 → 233**（+5 net：dry-run 5 个核心 + C3 阈值更新）
+- 全 suite 过，无回归
+- 真实样本 smoke：ZHSY100456 + 茶山集各 1 次，对比图人眼检查通过
+
+### Note
+- `pipeline/orchestrator.py` 行数阈值 C3 从 400 提到 600（v1.8 加了 dry-run dispatch + `_compute_page` 抽出约 +140 行；dry-run 主体 142 行在 dry_run.py）
+- `pipeline/` 包总行数阈值从 700 提到 1300（新增 dry_run.py + preview.py）
+
+---
+
 ## [0.1.8] - 2026-06-22 · v1.7
 
 ### Added
