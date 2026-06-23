@@ -136,3 +136,117 @@
 - [x] RTL 验证：--page-order rtl 翻转 [左,右]→[右,左]，outline 页号不变（"只指第一张"）
 - [x] README 加 v1.4 段 + CLI 表 + 推荐配方
 - [x] 记录：`docs/sessions/2026-06-21-book-cut-v1.4.md`
+
+## v1.9 · 图片预处理增强（提案：2026-06-23）
+
+> 提案：`docs/dev/2026-06-23-v1.9-preprocess-enhance.md`
+> 续 v1.8 dry-run；本节先列任务，实施时按勾选推进。
+
+### Phase A · D1 性能基准（先立）
+
+- [ ] 跑 `tests/test_perf.py` 量化 v1.8 baseline（4000×4000 全链 + 单页耗时）
+- [ ] 记录到 memory：v1.8 baseline ~160ms/页、各项分布
+
+### Phase B · 4 个新模块
+
+- [ ] `preprocess/sharpen.py`（PIL SHARPEN + cv2 unsharp mask，amount/radius 参数）
+- [ ] `preprocess/denoise.py`（PIL GaussianBlur + cv2.fastNlMeansDenoising，h 参数）
+- [ ] `preprocess/clahe.py`（cv2.createCLAHE，clip 参数）
+- [ ] `preprocess/gamma.py`（numpy power LUT，value 参数，clamp [0.25, 4.0]）
+- [ ] 4 个模块各自 `*_chain_token` 解析器（支持 `=value` 语法）
+- [ ] `preprocess/__init__.py` 加 `preprocess(image, chain, quality)` dispatcher
+- [ ] `BOOKCUT_PREPROCESS_QUALITY` 环境变量支持（fast/balanced/best，默认 balanced）
+
+### Phase C · CLI
+
+- [ ] `--preprocess` flag（链语法：逗号分隔 + `=value` 参数）
+- [ ] `--preprocess-quality` flag（fast/balanced/best）
+- [ ] CLI 校验：chain 空 / 非法 token / gamma 值越界
+- [ ] `cli.py` 加 help 文本（与现有 flag 风格一致）
+
+### Phase D · 流水线集成
+
+- [ ] `pipeline/orchestrator.py:_compute_page` 在 deskew 之前插入 `preprocess(image, chain)`
+- [ ] `run_pipeline` 读 `--preprocess` + `--preprocess-quality` 传给 `_compute_page`
+- [ ] A1 单次 RGB→L 优化保持不变（preprocess 在 PIL 上做，不进 arr 路径）
+- [ ] metrics 记录 preprocess 耗时（`page_metrics["timings_ms"]["preprocess"]`）
+
+### Phase E · GUI（同步）
+
+- [ ] row 5.5 "图像增强" frame：preset combobox + quality combobox + custom entry
+- [ ] preset 列表：`none` / `sharpen` / `denoise` / `clahe` / `sharpen,denoise` / `denoise,clahe,sharpen` / `gamma,sharpen` / `custom`
+- [ ] custom 模式：custom_entry enable，否则 disable
+- [ ] quality combobox 默认 balanced
+- [ ] `_on_preset_change` / `_on_pdf_change` 同步逻辑（pdf 关闭时仍可启用）
+- [ ] 拼到 cmd_args 的 `--preprocess` + `--preprocess-quality`
+
+### Phase F · dry-run 集成
+
+- [ ] `--dry-run --preprocess ...` 自动出 4 联对比图：`[原始 RGB] | [preprocess 后] | [deskew 后] | [最终 binarize 后]`
+- [ ] fast 模式不加第 2 列（避免依赖 cv2）
+- [ ] 复用 `pipeline/dry_run.py` 现有拼图基础设施
+
+### Phase G · 测试
+
+- [ ] `tests/test_preprocess.py` 4 模块各 3-5 个 test（共 ~20 个）：
+  - fast/balanced/best 各档位产出一致
+  - 参数解析（`sharpen=2.0` / `gamma=1.3`）
+  - 空链 / 非法 token / 越界 gamma 错误路径
+  - 质量档环境变量覆盖
+- [ ] 回归：228 测试零修改通过
+- [ ] ruff 0 错
+
+### Phase H · 真实数据验证
+
+- [ ] ZHSY 132 图：`--preprocess "denoise,clahe,sharpen"` 对比 v1.8 baseline
+- [ ] 茶山集 136 图回归
+- [ ] 性能：fast < 30ms/页 / balanced < 100ms/页 / best < 200ms/页
+- [ ] dry-run 4 联对比图人工确认增强有效
+
+### Phase I · 文档 + 收尾
+
+- [ ] README 加 v1.9 段：CLI 语法 + 推荐配方 + 质量档说明
+- [ ] CHANGELOG 加 v1.9 条目
+- [ ] 提案里的"待拍板"4 项决议落到代码注释 / README
+- [ ] 写 `docs/sessions/2026-06-23-book-cut-v1.9.md` session note
+- [ ] 更新 memory：`project_book_cut.md` v1.9 状态 + 踩坑
+
+### 依赖关系
+
+```
+Phase A (D1 baseline)
+   ↓
+Phase B (模块)
+   ↓
+Phase C (CLI) ──┐
+                ├→ Phase D (流水线)
+Phase E (GUI) ──┘        ↓
+                         ↓
+                    Phase F (dry-run)
+                         ↓
+                    Phase G (测试)
+                         ↓
+                    Phase H (真实数据)
+                         ↓
+                    Phase I (文档)
+```
+
+### 工作量预估
+
+- Phase A：0.5h（已有 test_perf.py）
+- Phase B：2-3h（4 模块 + dispatcher）
+- Phase C：0.5h（CLI flag）
+- Phase D：1h（流水线 + metrics）
+- Phase E：1h（GUI row）
+- Phase F：1h（4 联图）
+- Phase G：1.5h（~20 test）
+- Phase H：1h（ZHSY + 茶山集）
+- Phase I：1h（README + CHANGELOG + session note）
+
+**总计 ~9-10h（1-2 天）**
+
+### 不做（v2.0 候选）
+
+- per-page preprocess override（与 v1.5 paper deviation 同思路）
+- `--preprocess-after-crop`（binarize 之前的 per-page 增强）
+- 自适应 preprocess（自动判断页面需要哪种增强）

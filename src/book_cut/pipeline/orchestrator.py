@@ -43,6 +43,8 @@ from book_cut.pipeline.outline import (
     _resolve_outline_source,
     _write_pdf_with_outline,
 )
+from book_cut.preprocess import parse_chain as _parse_preprocess_chain
+from book_cut.preprocess import preprocess as _preprocess_op
 from book_cut.preprocess.binarize import binarize
 
 # v1.8+ dry-run：per-step 计时开关（避免影响 v1.7 行为；正式版可保持 True）
@@ -194,8 +196,13 @@ def _compute_page(
     half_offset: int,
     use_morph: bool,
     is_sampled_page: bool,
+    preprocess_chain: list[str] | None = None,
+    preprocess_quality: str = "balanced",
 ) -> dict:
     """v1.8+ 抽出的纯计算：处理单页但不写盘。
+
+    v1.9+：加 ``preprocess_chain`` 与 ``preprocess_quality`` —— deskew 之前应用
+    信号级增强（sharpen / denoise / clahe / gamma），不破坏 A1 单次 RGB→L 路径。
 
     Returns:
         ``{"original", "sub_pages", "metrics", "page_rects", "sub_arrs", "split_x"}``
@@ -205,7 +212,14 @@ def _compute_page(
     from book_cut.split.half import split_half_from_array
 
     image = page.image
+    raw_original = image  # v1.9+：dry-run 用作"ORIGINAL"列对比
     t0 = time.perf_counter() if _TIMING_ENABLED else 0.0
+
+    # 0. preprocess (v1.9+): deskew 之前，原始 PIL 上做
+    if preprocess_chain:
+        image = _preprocess_op(image, preprocess_chain, quality=preprocess_quality)
+    t_preprocess = time.perf_counter() - t0 if _TIMING_ENABLED else 0.0
+    t_deskew_start = time.perf_counter() if _TIMING_ENABLED else 0.0
 
     # 1. deskew
     if deskew_enabled:
@@ -216,7 +230,7 @@ def _compute_page(
     else:
         # v1.8.2+：RGB→L 一次转换，下游 split/trim/crop 共享同一 arr
         arr = np.asarray(image.convert("L"))
-    t_deskew = time.perf_counter() - t0 if _TIMING_ENABLED else 0.0
+    t_deskew = time.perf_counter() - t_deskew_start if _TIMING_ENABLED else 0.0
 
     # 2. split
     t_split_start = time.perf_counter() if _TIMING_ENABLED else 0.0
@@ -274,6 +288,10 @@ def _compute_page(
         "page_idx": page.page_index,
         "source": page.source_name,
         "size_in": list(image.size),
+        "preprocess": {
+            "chain": list(preprocess_chain) if preprocess_chain else [],
+            "quality": preprocess_quality,
+        },
         "deskew": {
             "applied": deskew_enabled,
             "angle": None,
@@ -295,6 +313,7 @@ def _compute_page(
             "k": 0.2 if binarize_method == "sauvola" else None,
         },
         "timings_ms": {
+            "preprocess": round(t_preprocess * 1000, 2),
             "deskew": round(t_deskew * 1000, 2),
             "split": round(t_split * 1000, 2),
             "crop": round(t_crop * 1000, 2),
@@ -305,6 +324,7 @@ def _compute_page(
 
     return {
         "original": image,
+        "raw_original": raw_original,
         "sub_pages": sub_pages,
         "sub_arrs": sub_arrs,
         "page_rects": page_rects,
@@ -346,6 +366,9 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
     use_morph: bool = not getattr(args, "no_morph", False)
     # v1.7 新增：PDF 页面统一尺寸（默认 keep = 保持原图分辨率）
     pdf_page_size: str = getattr(args, "pdf_page_size", "keep")
+    # v1.9 新增：图片预处理增强（默认空链 = 不处理，保持 v1.8 行为）
+    preprocess_chain: list[str] = _parse_preprocess_chain(getattr(args, "preprocess", "") or "")
+    preprocess_quality: str = getattr(args, "preprocess_quality", "balanced")
     book_name = input_path.stem if input_path.is_file() else input_path.name
 
     # v1.7：决定 (target_w, target_h) —— None 表示 keep（不统一）。
@@ -491,6 +514,8 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             split_strategy=args.split,
             half_offset=getattr(args, "half_offset", 0),
             use_morph=use_morph,
+            preprocess_chain=preprocess_chain,
+            preprocess_quality=preprocess_quality,
             cancel_event=cancel_event,
         )
         return  # dry-run 提前退出：不写 image_paths，不生成 PDF
@@ -509,6 +534,8 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
         half_offset=getattr(args, "half_offset", 0),
         use_morph=use_morph,
         is_sampled_page=True,
+        preprocess_chain=preprocess_chain,
+        preprocess_quality=preprocess_quality,
     )
     _save_subpages(first_result["sub_pages"], first_page)
 
@@ -532,6 +559,8 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             half_offset=getattr(args, "half_offset", 0),
             use_morph=use_morph,
             is_sampled_page=(i < sampled_remaining),
+            preprocess_chain=preprocess_chain,
+            preprocess_quality=preprocess_quality,
         )
         _save_subpages(result["sub_pages"], page)
 

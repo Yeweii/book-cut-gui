@@ -1,5 +1,44 @@
 # CHANGELOG
 
+## [0.1.12] - 2026-06-23 · v1.9
+
+### Added
+- **图片预处理增强** (`preprocess/{sharpen,denoise,clahe,gamma}.py`)：deskew 之前应用信号级增强
+  - `sharpen`：Unsharp Mask（fast=PIL.SHARPEN / balanced+best=cv2 addWeighted）
+  - `denoise`：fast=PIL GaussianBlur / balanced=cv2.bilateralFilter (d=9, σ=75) / best=cv2.fastNlMeansDenoising (NL-Means 全搜索)
+  - `clahe`：cv2.createCLAHE 局部直方图均衡（fast 档 no-op）
+  - `gamma`：伽马校正（γ<1 提亮，γ>1 压暗；clamp [0.25, 4.0]）
+- **CLI** `--preprocess "sharpen,denoise=7,clahe=2.0,gamma=1.2"`：链语法 + `=value` 覆盖默认
+- **CLI** `--preprocess-quality {fast,balanced,best}`：3 档后端选择
+- **环境变量** `BOOKCUT_PREPROCESS_QUALITY`：覆盖默认 quality
+- **GUI** "图像增强"控件：preset combobox（7 种 + custom）+ 质量 combobox + 自定义链 entry
+- **dry-run 集成**：`--dry-run --preprocess ...` 自动出 4 联对比图（原始 | preprocess | deskew | binarize）
+- **`preprocess` dispatcher** (`preprocess/__init__.py`)：链式应用 + 错误处理
+
+### Changed
+- **流水线顺序**：`load → preprocess → deskew → split → crop → binarize → export`（v1.9+ 加 preprocess）
+- **A1 单次 RGB→L 保持不变**：preprocess 在 PIL.Image 上做，不破坏 arr 路径
+- **`_compute_page` 返回 `raw_original`**：让 dry-run 区分"真·原始 vs preprocess 后"
+- **`render_compare` 加 `preprocessed` 参数**：可选插入第 1 列（"PREPROCESS"）
+
+### Performance（4000×4000 灰度全 4 op 链）
+| 档位 | 耗时 | 算法核心 |
+|------|------|----------|
+| `fast` | ~110ms | PIL 内置 |
+| `balanced` | ~180ms | cv2 bilateralFilter（**默认**，边缘保留 + 快） |
+| `best` | ~850ms | cv2 fastNlMeansDenoising 全搜索 |
+
+### Tests
+- `tests/test_preprocess.py` 27 个用例：每档 3 op × 3 quality / 链顺序 / 参数解析 / 错误路径 / 集成 metrics
+- 测试套件 **246 → 273**（+27），全过，ruff 0 错（修改文件）
+
+### Docs
+- README：新增"图片预处理增强（v1.9+）"章节（CLI 语法 / 性能表 / 推荐顺序）
+- CLI 顶部可选处理列表加 preprocess 描述
+- 流水线图加 preprocess 节点
+
+---
+
 ## [0.1.11] - 2026-06-23 · v1.8.2
 
 ### Fixed

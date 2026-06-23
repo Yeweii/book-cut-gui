@@ -74,6 +74,26 @@ def build_parser() -> argparse.ArgumentParser:
         "（1-2 px 笔画）会被形态学当尘点吃掉；遇到此场景用 --no-morph 保留。"
         "默认开（抗 1-3 px 尘点 / 折痕）。",
     )
+    # v1.9：图片预处理增强
+    parser.add_argument(
+        "--preprocess",
+        type=str,
+        default="",
+        help="图像预处理链（v1.9+；deskew 之前应用）："
+        "逗号分隔 op，可选 '=value' 覆盖默认参数。"
+        "可用 op：sharpen / denoise / clahe / gamma。"
+        "示例：--preprocess 'denoise=7,clahe=2.0,sharpen=1.5'"
+        "或 --preprocess 'gamma=1.3'（深底封面）。"
+        "默认空（不处理；保持 v1.8 行为）。",
+    )
+    parser.add_argument(
+        "--preprocess-quality",
+        choices=["fast", "balanced", "best"],
+        default="balanced",
+        help="预处理质量档（v1.9+；默认 balanced）："
+        "fast=PIL 内置（零 OpenCV 调用）/ balanced=cv2 默认参数 / best=cv2 高质量参数。"
+        "可被环境变量 BOOKCUT_PREPROCESS_QUALITY 覆盖。",
+    )
     parser.add_argument(
         "--binarize",
         choices=["none", "otsu", "adaptive", "sauvola"],

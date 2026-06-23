@@ -36,6 +36,8 @@ def run_dry_run(
     split_strategy: str,
     half_offset: int,
     use_morph: bool,
+    preprocess_chain: list[str] | None = None,
+    preprocess_quality: str = "balanced",
     cancel_event: threading.Event | None = None,
 ) -> None:
     """跑 dry-run：处理前 sample_n 页 + 渲染预览 + 写 summary。
@@ -64,6 +66,8 @@ def run_dry_run(
         half_offset=half_offset,
         use_morph=use_morph,
         is_sampled_page=True,
+        preprocess_chain=preprocess_chain,
+        preprocess_quality=preprocess_quality,
     )
     sample_results.append(first_result)
 
@@ -86,6 +90,8 @@ def run_dry_run(
             half_offset=half_offset,
             use_morph=use_morph,
             is_sampled_page=(i < sampled_remaining),
+            preprocess_chain=preprocess_chain,
+            preprocess_quality=preprocess_quality,
         )
         sample_results.append(result)
 
@@ -100,6 +106,7 @@ def run_dry_run(
     compare_images: list[tuple[int, Image.Image]] = []
     for r in sample_results:
         original = r["original"]
+        raw_original = r.get("raw_original")  # v1.9+：preprocess 前的真·原始
         sub_pages = r["sub_pages"]
         left = sub_pages[0] if len(sub_pages) > 0 else None
         right = sub_pages[1] if len(sub_pages) > 1 else None
@@ -111,8 +118,20 @@ def run_dry_run(
             "size_in": r["metrics"]["size_in"],
             "size_left": r["metrics"]["split"]["size_left"],
             "size_right": r["metrics"]["split"]["size_right"],
+            # v1.9+：preprocess 元数据
+            "preprocess_chain": r["metrics"].get("preprocess", {}).get("chain", []),
+            "preprocess_quality": r["metrics"].get("preprocess", {}).get("quality", ""),
         }
-        compare_img = render_compare(original, left, right, meta)
+        # v1.9+：当启用 preprocess 时，把"preprocess 后、deskew 前"的图作为 PREPROCESS 列
+        preprocessed = original if meta["preprocess_chain"] else None
+        # ORIGINAL 列：v1.9+ 用 raw_original（preprocess 前）；无 raw_original 则回退
+        compare_img = render_compare(
+            raw_original if raw_original is not None else original,
+            left,
+            right,
+            meta,
+            preprocessed=preprocessed,
+        )
         compare_images.append((r["metrics"]["page_idx"], compare_img))
 
     # 计算 elapsed + 汇总

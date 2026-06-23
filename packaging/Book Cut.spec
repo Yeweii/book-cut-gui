@@ -52,6 +52,11 @@ a = Analysis(
         "book_cut.detect.paper",
         "book_cut.preprocess.binarize",
         "book_cut.preprocess.deskew",
+        # v1.9：图片预处理增强
+        "book_cut.preprocess.sharpen",
+        "book_cut.preprocess.denoise",
+        "book_cut.preprocess.clahe",
+        "book_cut.preprocess.gamma",
         "pypdf",
     ],
     hookspath=[],
@@ -108,8 +113,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Book Cut",
         "CFBundleDisplayName": "Book Cut",
-        "CFBundleShortVersionString": "0.1.11",
-        "CFBundleVersion": "0.1.11",
+        "CFBundleShortVersionString": "0.1.12",
+        "CFBundleVersion": "0.1.12",
         "NSHighResolutionCapable": True,
         "LSApplicationCategoryType": "public.app-category.graphics-design",
         "NSHumanReadableCopyright": "MIT",

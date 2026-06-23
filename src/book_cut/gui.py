@@ -386,6 +386,50 @@ def run_gui() -> None:
     )
     pps_unit_combo.grid(row=0, column=6, padx=(2, 0))
 
+    # v1.9：图像增强（preprocess）—— 插入到 format frame row 2
+    preprocess_preset_var = tk.StringVar(value="none")
+    preprocess_quality_var = tk.StringVar(value="balanced")
+    preprocess_custom_var = tk.StringVar(value="denoise=7,clahe=2.0,sharpen=1.5")
+    ttk.Label(fmt_frame, text="图像增强:").grid(row=2, column=0, sticky="w", pady=(4, 0))
+    preset_combo = ttk.Combobox(
+        fmt_frame,
+        textvariable=preprocess_preset_var,
+        values=[
+            "none",
+            "sharpen",
+            "denoise",
+            "clahe",
+            "sharpen,denoise",
+            "denoise,clahe,sharpen",
+            "gamma,sharpen",
+            "custom",
+        ],
+        state="readonly",
+        width=22,
+    )
+    preset_combo.grid(row=2, column=1, sticky="w", pady=(4, 0), padx=(2, 8))
+    ttk.Label(fmt_frame, text="质量:").grid(row=2, column=2, sticky="e", pady=(4, 0))
+    quality_combo = ttk.Combobox(
+        fmt_frame,
+        textvariable=preprocess_quality_var,
+        values=["fast", "balanced", "best"],
+        state="readonly",
+        width=8,
+    )
+    quality_combo.grid(row=2, column=3, sticky="w", pady=(4, 0), padx=(2, 8))
+    custom_entry = ttk.Entry(
+        fmt_frame, textvariable=preprocess_custom_var, width=30, state="disabled"
+    )
+    custom_entry.grid(row=2, column=4, columnspan=3, sticky="we", pady=(4, 0))
+
+    def _on_preset_change(*_args: object) -> None:
+        """preset 切换：custom 启用 entry，其他禁用。"""
+        is_custom = preprocess_preset_var.get() == "custom"
+        custom_entry.config(state="normal" if is_custom else "disabled")
+
+    preprocess_preset_var.trace_add("write", _on_preset_change)
+    _on_preset_change()
+
     def _on_pps_change(*_args: object) -> None:
         """PDF 页面尺寸下拉变化：custom 启用 W/H/unit，其他禁用。"""
         is_custom = pps_var.get() == "自定义"
@@ -484,6 +528,13 @@ def run_gui() -> None:
             "dry_run": dry_run_var.get(),
             "sample_n": sample_n_var.get(),
             "preview_output": preview_dir_var.get() or None,
+            # v1.9：图片预处理增强
+            "preprocess": (
+                preprocess_custom_var.get()
+                if preprocess_preset_var.get() == "custom"
+                else preprocess_preset_var.get()
+            ),
+            "preprocess_quality": preprocess_quality_var.get(),
         }
         t = threading.Thread(
             target=_run_pipeline_thread,

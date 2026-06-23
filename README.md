@@ -13,9 +13,10 @@
   - 倾斜校正 `--deskew`（Hough 法默认，找不到时回退投影法）
   - 单页裁切 `--crop {none,trim,border}`：trim=白边裁切，border=版框内裁（找不到版框自动回退 trim）
   - 二值化 `--binarize {none,otsu,adaptive,sauvola}`，Sauvola 默认（最适合古籍泛黄/不均光照）
+  - 图片预处理 `--preprocess "sharpen,denoise,clahe,gamma"`（v1.9+；4 个独立 op 链式应用，fast/balanced/best 三档）
 - **输出**：`{book}_{idx:04d}.{ext}`（png/jpg/tif/webp）+ 可选 `--pdf` 合并 PDF（img2pdf 无损）
 - **GUI**：Tkinter 单窗口（macOS 自动用 aqua 主题）+ 后台线程 + 实时日志 + **停止按钮**（v1.8.1+ 长跑可随时取消）
-- 流水线：`load → deskew → split → crop → binarize → export`
+- 流水线：`load → preprocess → deskew → split → crop → binarize → export`
 
 ## 安装
 
@@ -229,6 +230,64 @@ GUI：在"二值化"行右侧加 **Dry-run 预览（不写盘）** checkbox + **
 ### v1.8.1 GUI 停止按钮
 
 "开始处理"按钮旁加 **停止** 按钮（默认 disabled）：运行中可按下优雅取消 —— 取消时**单页计算保持原子性**（在页边界检查），不写半截 PDF，已生成的图保留。
+
+## 图片预处理增强（v1.9+）
+
+古籍扫描件常因保存条件差、扫描参数不一出现**墨迹模糊 / 纸张污渍 / 光照不均 / 整体偏暗**。v1.9+ 在 **deskew 之前** 加 4 个独立的可选信号级增强：
+
+| op | 解决 | 算法 |
+|----|------|------|
+| `sharpen` | 笔画模糊 | Unsharp Mask（cv2 / PIL） |
+| `denoise` | 1-3 px 尘点、扫描噪点 | fast: PIL GaussianBlur；balanced: bilateralFilter；best: NL-Means |
+| `clahe` | 泛黄纸、光照不均 | cv2.createCLAHE 局部直方图均衡 |
+| `gamma` | 深底封面 / 过曝 | 伽马校正（γ<1 提亮，γ>1 压暗） |
+
+### CLI 用法
+
+```bash
+# 启用锐化（默认 balanced 档）
+python -m book_cut -i book.pdf -o ./out --preprocess "sharpen"
+
+# 推荐链：denoise → clahe → sharpen
+python -m book_cut -i book.pdf -o ./out --preprocess "denoise=7,clahe=2.0,sharpen=1.5"
+
+# 质量档：fast（PIL 内置，零 OpenCV） / balanced（cv2 中等，默认） / best（cv2 高质量）
+python -m book_cut -i book.pdf -o ./out --preprocess "denoise" --preprocess-quality best
+
+# 伽马：深底封面用 γ<1 提亮
+python -m book_cut -i cover.jpg -o ./out --split half --preprocess "gamma=0.7"
+```
+
+### 语法
+
+`--preprocess` 接受**逗号分隔的链**（按声明顺序应用），每个 token 可选 `=value` 覆盖默认参数：
+
+| token | 默认（balanced） | 说明 |
+|-------|------------------|------|
+| `sharpen` / `sharp` | amount=1.5 | 锐化强度（0=原图，1=典型，2=强） |
+| `denoise` / `dn` | h=7 | NL-Means 强度 / bilateral sigma |
+| `clahe` / `cl` | clip=2.0 | 对比度限制（古籍泛黄常用 2.0~3.0） |
+| `gamma` / `gm` | γ=1.2 | 伽马值（γ<1 提亮，γ>1 压暗；clamp [0.25, 4.0]） |
+
+**推荐顺序**：denoise → clahe → sharpen → gamma（先清噪再展对比再锐化最后调亮度）。
+
+### 质量档性能（4000×4000 灰度，全 4 op 链）
+
+| 档位 | 耗时 | 用途 |
+|------|------|------|
+| `fast` | ~110ms | 批量处理（NL-Means 太重的场景） |
+| `balanced` | ~180ms | **默认推荐**，bilateralFilter 边缘保留 |
+| `best` | ~850ms | 一次性精扫，NL-Means 全搜索 |
+
+环境变量 `BOOKCUT_PREPROCESS_QUALITY=fast|balanced|best` 可覆盖默认值。
+
+### dry-run 集成
+
+`--dry-run --preprocess ...` 自动出 **4 联对比图**：`[原始 RGB] | [preprocess 后] | [deskew 后] | [最终 binarize 后]`。
+
+### GUI
+
+在"输出格式"行下方加 **图像增强** 控件：preset combobox（none / sharpen / denoise / clahe / ... 7 种 + custom）+ 质量 combobox（fast/balanced/best）+ 自定义链 entry（仅 custom 时 enable）。
 
 ## 项目结构
 

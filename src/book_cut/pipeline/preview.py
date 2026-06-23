@@ -70,11 +70,17 @@ def render_compare(
     right: Image.Image | None,
     meta: dict,
     target_height: int = DEFAULT_TARGET_HEIGHT,
+    preprocessed: Image.Image | None = None,
 ) -> Image.Image:
-    """渲染对比拼图：原图 | L | R（单页时省略 R 列）。
+    """渲染对比拼图：原图 | [preprocess] | L | R（单页时省略 R 列）。
+
+    v1.9+：当 ``preprocessed`` 不为 None 时，插入第 1 列（"PREPROCESS"）。
+    其余列逻辑不变。
 
     Args:
-        original: deskew 后的原图（RGB）
+        original: preprocess+deskew 后的原图（RGB；v1.9 之前是 deskew 后）。
+        preprocessed: v1.9+：仅 preprocess 后、deskew 前的图（RGB/L）。
+            ``None`` → 不插入 preprocess 列（v1.8 行为）。
         left/right: split 后的两页（None = single-page 模式）
         meta: ``{"source": str, "page_idx": int, "split_x": int | None,
                "deskew_angle": float | None, "size_in": tuple}``
@@ -87,6 +93,19 @@ def render_compare(
     titles: list[str] = [f"ORIGINAL\n{meta.get('source', '?')} p{meta.get('page_idx', '?')}"]
     if meta.get("size_in"):
         titles[-1] += f"\n{meta['size_in'][0]}x{meta['size_in'][1]}"
+
+    # v1.9+：preprocess 列（在 ORIGINAL 之后、L/R 之前）
+    if preprocessed is not None:
+        columns.append(
+            preprocessed.convert("RGB") if preprocessed.mode != "RGB" else preprocessed
+        )
+        pp_chain = meta.get("preprocess_chain") or []
+        pp_quality = meta.get("preprocess_quality") or "?"
+        title = "PREPROCESS"
+        if pp_chain:
+            title += f"\n{','.join(pp_chain)}"
+        title += f"\nquality={pp_quality}"
+        titles.append(title)
 
     if left is not None:
         columns.append(left.convert("RGB") if left.mode != "RGB" else left)
@@ -124,8 +143,8 @@ def render_compare(
         col_x_offset = COLUMN_PADDING + sum(
             c.size[0] for c in columns[:original_col_idx]
         ) + COLUMN_PADDING * original_col_idx
-        # 等比映射 size_in → 实际列宽
-        col_w, col_h_actual = columns[0].size
+        # 等比映射 size_in → 实际列宽（v1.9+ ORIGINAL 列 index 不变；PREPROCESS 在其后）
+        col_w, col_h_actual = columns[original_col_idx].size
         sx_ratio = col_w / size_in[0] if size_in[0] else 0
         sx_canvas = int(round(col_x_offset + split_x * sx_ratio))
         # 红色虚线（5 段：画 5px 实线 + 5px 间隔）
