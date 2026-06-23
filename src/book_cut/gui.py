@@ -41,6 +41,61 @@ PDF_PAGE_UNIT_LABELS: tuple[str, ...] = ("毫米 (mm)", "厘米 (cm)", "英寸 (
 PDF_PAGE_UNIT_MAP: dict[str, str] = dict(zip(PDF_PAGE_UNIT_LABELS, PDF_PAGE_UNIT_CHOICES, strict=True))
 PDF_PAGE_UNIT_REVERSE_MAP: dict[str, str] = {v: k for k, v in PDF_PAGE_UNIT_MAP.items()}
 
+# v1.9+：preprocess 质量档（中文显示 → CLI token）
+PREPROCESS_QUALITY_LABELS: tuple[str, ...] = ("快速", "平衡", "最佳")
+PREPROCESS_QUALITY_MAP: dict[str, str] = dict(
+    zip(PREPROCESS_QUALITY_LABELS, ("fast", "balanced", "best"), strict=True)
+)
+
+
+# ----------------------------------------------------------------------------
+# v1.9+：简易 Tooltip（hover 显示提示文本）
+# ----------------------------------------------------------------------------
+
+
+class Tooltip:
+    """tkinter 简易 tooltip：hover 显示说明文本。
+
+    v1.9+：用于"图像增强"控件（每个 op 复选框 / 参数 / 质量下拉都有提示）。
+    """
+
+    def __init__(self, widget: tk.Widget, text: str) -> None:
+        self.widget = widget
+        self.text = text
+        self.tip: tk.Toplevel | None = None
+        widget.bind("<Enter>", self._show)
+        widget.bind("<Leave>", self._hide)
+        # 点击时也隐藏（避免 tooltip 遮住下拉）
+        widget.bind("<ButtonPress>", self._hide)
+
+    def _show(self, event: object = None) -> None:
+        if self.tip is not None:
+            return
+        try:
+            x = self.widget.winfo_rootx() + 24
+            y = self.widget.winfo_rooty() + self.widget.winfo_height() + 6
+            self.tip = tk.Toplevel(self.widget)
+            self.tip.wm_overrideredirect(True)
+            self.tip.wm_geometry(f"+{x}+{y}")
+            ttk.Label(
+                self.tip,
+                text=self.text,
+                background="#ffffe0",
+                relief="solid",
+                borderwidth=1,
+                padding=(6, 4),
+                font=("Helvetica", 9),
+                justify="left",
+                wraplength=320,
+            ).pack()
+        except tk.TclError:
+            self.tip = None
+
+    def _hide(self, event: object = None) -> None:
+        if self.tip is not None:
+            self.tip.destroy()
+            self.tip = None
+
 
 # ----------------------------------------------------------------------------
 # v1.6+ E1+E3：UI 联动 + 友好错误提示（无 Tk 依赖的纯函数，方便单测）
@@ -386,49 +441,168 @@ def run_gui() -> None:
     )
     pps_unit_combo.grid(row=0, column=6, padx=(2, 0))
 
-    # v1.9：图像增强（preprocess）—— 插入到 format frame row 2
-    preprocess_preset_var = tk.StringVar(value="none")
-    preprocess_quality_var = tk.StringVar(value="balanced")
-    preprocess_custom_var = tk.StringVar(value="denoise=7,clahe=2.0,sharpen=1.5")
-    ttk.Label(fmt_frame, text="图像增强:").grid(row=2, column=0, sticky="w", pady=(4, 0))
-    preset_combo = ttk.Combobox(
-        fmt_frame,
-        textvariable=preprocess_preset_var,
-        values=[
-            "none",
-            "sharpen",
-            "denoise",
-            "clahe",
-            "sharpen,denoise",
-            "denoise,clahe,sharpen",
-            "gamma,sharpen",
-            "custom",
-        ],
-        state="readonly",
-        width=22,
+    # v1.9+：图像增强（中文选项 + 可调参数 + hover 工具提示）
+    # 4 个 op 各自独立勾选 + 参数 Spinbox；chain 由勾选状态自动拼装
+    sharpen_var = tk.BooleanVar(value=False)
+    sharpen_amt_var = tk.DoubleVar(value=1.5)
+    denoise_var = tk.BooleanVar(value=False)
+    denoise_h_var = tk.DoubleVar(value=7.0)
+    clahe_var = tk.BooleanVar(value=False)
+    clahe_clip_var = tk.DoubleVar(value=2.0)
+    gamma_var = tk.BooleanVar(value=False)
+    gamma_value_var = tk.DoubleVar(value=1.2)
+    preprocess_quality_var = tk.StringVar(value=PREPROCESS_QUALITY_LABELS[1])  # 平衡
+
+    ttk.Label(fmt_frame, text="图像增强:").grid(
+        row=2, column=0, sticky="nw", pady=(6, 0)
     )
-    preset_combo.grid(row=2, column=1, sticky="w", pady=(4, 0), padx=(2, 8))
-    ttk.Label(fmt_frame, text="质量:").grid(row=2, column=2, sticky="e", pady=(4, 0))
+    pre_inner = ttk.Frame(fmt_frame)
+    pre_inner.grid(row=2, column=1, columnspan=3, sticky="w", pady=(6, 0))
+
+    # 行 0：4 个 op 复选框 + 各自参数 Spinbox
+    sharpen_chk = ttk.Checkbutton(pre_inner, text="锐化", variable=sharpen_var)
+    sharpen_chk.grid(row=0, column=0, sticky="w")
+    ttk.Label(pre_inner, text="强度").grid(row=0, column=1, padx=(6, 2))
+    sharpen_spin = ttk.Spinbox(
+        pre_inner,
+        textvariable=sharpen_amt_var,
+        from_=0.5,
+        to=3.0,
+        increment=0.1,
+        width=5,
+    )
+    sharpen_spin.grid(row=0, column=2)
+
+    denoise_chk = ttk.Checkbutton(pre_inner, text="降噪", variable=denoise_var)
+    denoise_chk.grid(row=0, column=3, padx=(14, 0), sticky="w")
+    ttk.Label(pre_inner, text="h").grid(row=0, column=4, padx=(6, 2))
+    denoise_spin = ttk.Spinbox(
+        pre_inner,
+        textvariable=denoise_h_var,
+        from_=1.0,
+        to=15.0,
+        increment=0.5,
+        width=5,
+    )
+    denoise_spin.grid(row=0, column=5)
+
+    clahe_chk = ttk.Checkbutton(pre_inner, text="对比度增强", variable=clahe_var)
+    clahe_chk.grid(row=0, column=6, padx=(14, 0), sticky="w")
+    ttk.Label(pre_inner, text="clip").grid(row=0, column=7, padx=(6, 2))
+    clahe_spin = ttk.Spinbox(
+        pre_inner,
+        textvariable=clahe_clip_var,
+        from_=0.5,
+        to=5.0,
+        increment=0.1,
+        width=5,
+    )
+    clahe_spin.grid(row=0, column=8)
+
+    gamma_chk = ttk.Checkbutton(pre_inner, text="伽马校正", variable=gamma_var)
+    gamma_chk.grid(row=0, column=9, padx=(14, 0), sticky="w")
+    ttk.Label(pre_inner, text="γ").grid(row=0, column=10, padx=(6, 2))
+    gamma_spin = ttk.Spinbox(
+        pre_inner,
+        textvariable=gamma_value_var,
+        from_=0.3,
+        to=3.0,
+        increment=0.05,
+        width=5,
+    )
+    gamma_spin.grid(row=0, column=11)
+
+    # 行 1：质量下拉 + 恢复默认 + 操作提示
+    ttk.Label(pre_inner, text="质量:").grid(row=1, column=0, sticky="e", pady=(4, 0))
     quality_combo = ttk.Combobox(
-        fmt_frame,
+        pre_inner,
         textvariable=preprocess_quality_var,
-        values=["fast", "balanced", "best"],
+        values=PREPROCESS_QUALITY_LABELS,
         state="readonly",
         width=8,
     )
-    quality_combo.grid(row=2, column=3, sticky="w", pady=(4, 0), padx=(2, 8))
-    custom_entry = ttk.Entry(
-        fmt_frame, textvariable=preprocess_custom_var, width=30, state="disabled"
+    quality_combo.grid(row=1, column=1, sticky="w", pady=(4, 0))
+
+    def _reset_preprocess() -> None:
+        sharpen_var.set(False)
+        sharpen_amt_var.set(1.5)
+        denoise_var.set(False)
+        denoise_h_var.set(7.0)
+        clahe_var.set(False)
+        clahe_clip_var.set(2.0)
+        gamma_var.set(False)
+        gamma_value_var.set(1.2)
+        preprocess_quality_var.set(PREPROCESS_QUALITY_LABELS[1])
+
+    ttk.Button(pre_inner, text="恢复默认", command=_reset_preprocess).grid(
+        row=1, column=2, columnspan=2, sticky="w", padx=(8, 0), pady=(4, 0)
     )
-    custom_entry.grid(row=2, column=4, columnspan=3, sticky="we", pady=(4, 0))
+    ttk.Label(
+        pre_inner,
+        text="勾选启用操作，调节数值覆盖默认（鼠标悬停看提示）",
+        foreground="gray",
+    ).grid(
+        row=1, column=4, columnspan=8, sticky="w", padx=(8, 0), pady=(4, 0)
+    )
 
-    def _on_preset_change(*_args: object) -> None:
-        """preset 切换：custom 启用 entry，其他禁用。"""
-        is_custom = preprocess_preset_var.get() == "custom"
-        custom_entry.config(state="normal" if is_custom else "disabled")
-
-    preprocess_preset_var.trace_add("write", _on_preset_change)
-    _on_preset_change()
+    # 工具提示：每个控件都说明"推荐场景 / 参数范围 / 默认值"
+    Tooltip(
+        sharpen_chk,
+        "锐化文字边缘，让模糊的墨迹变清晰\n"
+        "算法：Unsharp Mask（原图 + amount × (原图 − 高斯)）\n"
+        "推荐：古籍模糊 / 扫描失焦",
+    )
+    Tooltip(
+        sharpen_spin,
+        "锐化强度\n"
+        "范围 0.5 – 3.0，默认 1.5（平衡档）\n"
+        "越大越锐利，过大易失真/振铃",
+    )
+    Tooltip(
+        denoise_chk,
+        "去除扫描噪点和纸张污渍\n"
+        "算法：快速=高斯模糊 / 平衡=双边滤波（边缘保留） / 最佳=NL-Means\n"
+        "推荐：古籍泛黄 / 有杂点 / 暗房扫描",
+    )
+    Tooltip(
+        denoise_spin,
+        "降噪强度 h\n"
+        "平衡档 = 双边滤波 σ（默认 7）\n"
+        "最佳档 = NL-Means h（默认 10）\n"
+        "范围 1 – 15，越大去噪越强",
+    )
+    Tooltip(
+        clahe_chk,
+        "局部直方图均衡化（CLAHE）\n"
+        "改善光照不均 / 局部明暗不一致 / 暗角\n"
+        "推荐：扫描时光照不均 / 古籍边缘发暗",
+    )
+    Tooltip(
+        clahe_spin,
+        "对比度限制 clipLimit\n"
+        "范围 0.5 – 5.0，默认 2.0\n"
+        "越大对比越强，过大易放大噪点",
+    )
+    Tooltip(
+        gamma_chk,
+        "伽马校正（幂律变换）\n"
+        "γ < 1 提亮，γ > 1 压暗\n"
+        "推荐：整体偏暗 / 偏亮的扫描件",
+    )
+    Tooltip(
+        gamma_spin,
+        "伽马值 γ\n"
+        "范围 0.3 – 3.0，默认 1.2\n"
+        "古籍深底场景 1.2；偏暗用 <1；偏亮用 >1\n"
+        "内部 clamp 到 [0.25, 4.0]",
+    )
+    Tooltip(
+        quality_combo,
+        "后端算法选择\n"
+        "快速 = PIL 内置（最快，质量一般）\n"
+        "平衡 = 双边滤波（默认，推荐古籍）\n"
+        "最佳 = NL-Means（慢 5x，效果最好）",
+    )
 
     def _on_pps_change(*_args: object) -> None:
         """PDF 页面尺寸下拉变化：custom 启用 W/H/unit，其他禁用。"""
@@ -491,6 +665,23 @@ def run_gui() -> None:
     cancel_event_holder: list[threading.Event | None] = [None]
 
     # 执行按钮
+    def _build_preprocess_chain() -> str:
+        """v1.9+：从 4 个 op 复选框 + 参数 Spinbox 自动拼装 chain。
+
+        顺序：sharpen → denoise → clahe → gamma（前一个的输出是后一个的输入）。
+        全部未勾选 → 空字符串 → dispatcher 跳过。
+        """
+        tokens: list[str] = []
+        if sharpen_var.get():
+            tokens.append(f"sharpen={sharpen_amt_var.get():g}")
+        if denoise_var.get():
+            tokens.append(f"denoise={denoise_h_var.get():g}")
+        if clahe_var.get():
+            tokens.append(f"clahe={clahe_clip_var.get():g}")
+        if gamma_var.get():
+            tokens.append(f"gamma={gamma_value_var.get():g}")
+        return ",".join(tokens)
+
     def on_run() -> None:
         if not input_var.get() or not output_var.get():
             messagebox.showwarning("提示", "请先填写输入路径和输出目录")
@@ -528,13 +719,9 @@ def run_gui() -> None:
             "dry_run": dry_run_var.get(),
             "sample_n": sample_n_var.get(),
             "preview_output": preview_dir_var.get() or None,
-            # v1.9：图片预处理增强
-            "preprocess": (
-                preprocess_custom_var.get()
-                if preprocess_preset_var.get() == "custom"
-                else preprocess_preset_var.get()
-            ),
-            "preprocess_quality": preprocess_quality_var.get(),
+            # v1.9+：图片预处理增强（chain 由勾选状态自动拼装）
+            "preprocess": _build_preprocess_chain(),
+            "preprocess_quality": PREPROCESS_QUALITY_MAP[preprocess_quality_var.get()],
         }
         t = threading.Thread(
             target=_run_pipeline_thread,
