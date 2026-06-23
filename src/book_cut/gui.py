@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import os
 import queue
+import subprocess
 import sys
 import threading
 import tkinter as tk
@@ -148,6 +150,10 @@ def run_gui() -> None:
     pdf_var = tk.BooleanVar(value=False)
     deskew_var = tk.BooleanVar(value=False)
     running_var = tk.BooleanVar(value=False)
+    # v1.8+ dry-run
+    dry_run_var = tk.BooleanVar(value=False)
+    sample_n_var = tk.IntVar(value=3)
+    preview_dir_var = tk.StringVar()  # 预览输出目录（空 = 系统 tmpdir）
 
     log_queue: queue.Queue = queue.Queue()
 
@@ -291,6 +297,25 @@ def run_gui() -> None:
         row=0, column=1, padx=8
     )
 
+    # v1.8+ dry-run 控件
+    dry_frame = ttk.Frame(root)
+    dry_frame.grid(row=6, column=2, sticky="w", **pad)
+    ttk.Checkbutton(
+        dry_frame,
+        text="Dry-run 预览（不写盘）",
+        variable=dry_run_var,
+    ).grid(row=0, column=0)
+    ttk.Label(dry_frame, text="采样:").grid(row=0, column=1, padx=(8, 2))
+    sample_n_spin = ttk.Spinbox(
+        dry_frame,
+        textvariable=sample_n_var,
+        from_=1,
+        to=20,
+        width=4,
+    )
+    sample_n_spin.grid(row=0, column=2, padx=(0, 2))
+    ttk.Label(dry_frame, text="页", foreground="gray").grid(row=0, column=3)
+
     # 输出格式 + PDF
     ttk.Label(root, text="输出格式:").grid(row=7, column=0, sticky="e", **pad)
     fmt_frame = ttk.Frame(root)
@@ -379,6 +404,34 @@ def run_gui() -> None:
     pdf_var.trace_add("write", _on_pdf_change)
     _on_pdf_change()  # 初始化时跑一次对齐默认状态
 
+    # v1.8+ dry-run：勾选时整张"输出格式"行 disable
+    def _set_fmt_state_recursive(parent, state: str) -> None:
+        """递归设置 fmt_frame 子树的 state。"""
+        for w in parent.winfo_children():
+            try:
+                cls = w.winfo_class()
+                if cls in ("TCombobox", "TEntry"):
+                    w.config(state=state if state == "disabled" else "readonly")
+                elif cls in ("TCheckbutton", "TRadiobutton"):
+                    # checkbutton 没法直接 disable，存 state 但点击仍响应
+                    # 这里只把视觉灰度变一下：用户勾选 dry-run 时 PDF/output 等无意义
+                    pass
+            except tk.TclError:
+                pass
+            # 递归进子容器（po_frame / pps_frame）
+            if w.winfo_children():
+                _set_fmt_state_recursive(w, state)
+
+    def _on_dry_run_change(*_args: object) -> None:
+        if dry_run_var.get():
+            _set_fmt_state_recursive(fmt_frame, "disabled")
+        else:
+            # 恢复时触发 PDF 联动（让 pps 等回到正确 state）
+            _on_pdf_change()
+            _on_pps_change()
+
+    dry_run_var.trace_add("write", _on_dry_run_change)
+
     # 进度条
     progress = ttk.Progressbar(root, mode="indeterminate")
     progress.grid(row=8, column=0, columnspan=3, sticky="ew", padx=8, pady=(12, 4))
@@ -414,6 +467,10 @@ def run_gui() -> None:
             "pdf_page_size": PDF_PAGE_SIZE_MAP[pps_var.get()],
             "pdf_page_dim": f"{pps_w_var.get()}x{pps_h_var.get()}",
             "pdf_page_unit": PDF_PAGE_UNIT_MAP[pps_unit_var.get()],
+            # v1.8+ dry-run
+            "dry_run": dry_run_var.get(),
+            "sample_n": sample_n_var.get(),
+            "preview_output": preview_dir_var.get() or None,
         }
         t = threading.Thread(
             target=_run_pipeline_thread,
@@ -424,6 +481,31 @@ def run_gui() -> None:
 
     run_btn = ttk.Button(root, text="开始处理", command=on_run)
     run_btn.grid(row=9, column=0, columnspan=3, pady=8)
+
+    # v1.8+ dry-run：执行后启用"打开预览目录"按钮
+    def _open_preview_dir() -> None:
+        target = preview_dir_var.get()
+        if not target:
+            messagebox.showinfo("提示", "未指定预览目录；查看 tmpdir 默认值请用 CLI")
+            return
+        p = Path(target)
+        if not p.exists():
+            messagebox.showwarning("提示", f"目录不存在：{p}")
+            return
+        try:
+            if sys.platform == "darwin":
+                subprocess.Popen(["open", str(p)])
+            elif sys.platform.startswith("win"):
+                os.startfile(str(p))  # noqa: S606
+            else:
+                subprocess.Popen(["xdg-open", str(p)])
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("打开失败", str(e))
+
+    open_preview_btn = ttk.Button(
+        root, text="打开预览目录", command=_open_preview_dir, state="disabled"
+    )
+    open_preview_btn.grid(row=9, column=2, sticky="e", padx=8)
 
     # 日志
     ttk.Label(root, text="日志:").grid(row=10, column=0, sticky="nw", padx=8, pady=(8, 0))
@@ -450,6 +532,13 @@ def run_gui() -> None:
                 log_text.configure(state="disabled")
                 if tag in ("done", "error"):
                     progress.stop()
+                    run_btn.config(state="normal")
+                    running_var.set(False)
+                    # v1.8+ dry-run 完成后启用"打开预览目录"按钮
+                    if tag == "done" and dry_run_var.get() and preview_dir_var.get():
+                        open_preview_btn.config(state="normal")
+                    if tag == "error":
+                        messagebox.showerror("处理出错", msg)
                     run_btn.config(state="normal")
                     running_var.set(False)
                     if tag == "error":

@@ -120,6 +120,24 @@ def build_parser() -> argparse.ArgumentParser:
         default="png",
         help="输出图片格式（默认 png）",
     )
+    # v1.8+ dry-run 预览模式
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="预览模式（v1.8+）：不写实际输出，仅跑前 N 页出对比图 + 指标 JSON。"
+        "--pdf / --format / --pdf-page-size / --no-outline 等写盘 flag 全部 warn 后忽略。",
+    )
+    parser.add_argument(
+        "--sample-n",
+        type=int,
+        default=3,
+        help="dry-run 采样页数（仅 --dry-run 生效；默认 3；最小 1）",
+    )
+    parser.add_argument(
+        "--preview-output",
+        default=None,
+        help="dry-run 预览输出目录（仅 --dry-run 生效；默认系统 tmpdir 带时间戳）",
+    )
     parser.add_argument("--gui", action="store_true", help="启动 GUI")
     return parser
 
@@ -136,6 +154,23 @@ def main(argv: list[str] | None = None) -> int:
 
     if not args.input or not args.output:
         parser.error("--input 与 --output 必填（或使用 --gui）")
+
+    # v1.8+ dry-run 校验
+    if args.dry_run:
+        if args.sample_n < 1:
+            parser.error("--sample-n 必须 >= 1")
+        # 写盘相关 flag 全部 warn 后忽略
+        if args.pdf:
+            print("[WARN] --dry-run 模式忽略 --pdf")
+        if args.pdf_page_size != "keep":
+            print(f"[WARN] --dry-run 模式忽略 --pdf-page-size={args.pdf_page_size}")
+        if not args.outline:
+            print("[WARN] --dry-run 模式忽略 --no-outline")
+    else:
+        if args.sample_n != 3:
+            print(f"[WARN] --sample-n={args.sample_n} 仅在 --dry-run 生效；忽略")
+        if args.preview_output:
+            print("[WARN] --preview-output 仅在 --dry-run 生效；忽略")
 
     from book_cut.pipeline import run_pipeline
 

@@ -103,17 +103,20 @@ def test_c3_init_does_not_reexport_unstable_helpers():
 # ============ 行数约束 ============
 
 
-def test_c3_orchestrator_line_count_under_400():
-    """C3：``orchestrator.py`` < 400 行（仍比原 455 行单文件短）。
+def test_c3_orchestrator_line_count_under_600():
+    """C3：``orchestrator.py`` < 600 行（仍比原 455 行单文件短）。
 
     v1.7：阈值从 350 提到 400 —— 新增 PDF 页面尺寸 max/first 预扫 + fit 步骤
     约 +50 行（用 docstring 解释分支，方便单测读懂）。
+    v1.8：阈值 400 → 600 —— 新增 dry-run dispatch + _compute_page 抽出
+    约 +140 行（dry-run 入口 / 公共 compute 函数），dry-run 主体迁到 dry_run.py
+    （142 行），orchestrator 只保留入口。
     """
     from pathlib import Path
 
     p = Path(__file__).parent.parent / "src" / "book_cut" / "pipeline" / "orchestrator.py"
     lines = sum(1 for _ in p.open())
-    assert lines < 400, f"orchestrator.py 应 < 400 行，实际 {lines}"
+    assert lines < 600, f"orchestrator.py 应 < 600 行，实际 {lines}"
 
 
 def test_c3_outline_line_count_under_150():
@@ -135,19 +138,20 @@ def test_c3_crop_config_line_count_under_120():
 
 
 def test_c3_split_saves_total_lines():
-    """C3：拆分后 4 个文件总行数 < 原 455 行（去掉冗余 import / docstring）。"""
+    """C3：拆分后 5 个文件总行数 < 原 455 行（去掉冗余 import / docstring）。"""
     from pathlib import Path
 
     pkg_dir = Path(__file__).parent.parent / "src" / "book_cut" / "pipeline"
     total = sum(
         sum(1 for _ in (pkg_dir / f).open())
-        for f in ["__init__.py", "orchestrator.py", "outline.py", "crop_config.py"]
+        for f in ["__init__.py", "orchestrator.py", "outline.py", "crop_config.py", "dry_run.py", "preview.py"]
     )
     # 拆分后总行数 ≈ 原 455（拆出来 docstring + re-import 抵消了部分节省）
     # v1.7：阈值从 600 提到 700 —— orchestrator 加了 max/first 预扫 + fit
-    # 但单文件 < 400，最大拆分价值
-    assert total < 700, f"拆分后总行数 {total} 超过预算 700（原 455）"
-    assert total > 400, f"拆分后总行数 {total} 异常少"
+    # v1.8：阈值 700 → 1300 —— dry-run 拆出 dry_run.py (142) + preview.py (272)
+    #        但单文件 < 600，最大拆分价值
+    assert total < 1300, f"拆分后总行数 {total} 超过预算 1300（原 455）"
+    assert total > 500, f"拆分后总行数 {total} 异常少"
 
 
 def test_c3_old_pipeline_py_removed():

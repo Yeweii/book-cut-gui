@@ -1,18 +1,22 @@
 """orchestrator：流水线主循环。
 
 职责：
-- ``run_pipeline(args)``：顶层入口
+- ``run_pipeline(args)``：顶层入口（v1.8+ 支持 dry_run）
 - ``_process_one(page, ...)``：单页 deskew → split → crop → binarize → save
 - ``_split_from_array(arr, strategy, ...)``：split 调度
 - ``_crop_pages_from_arrays(...)`` / ``_crop_pages_from_arrays_with_config(...)``：crop 调度
 - ``_reverse_pair(sub_pages)``：RTL flip
+- ``_compute_split_confidence(...)``：v1.8 split 质量量化（0-1）
 
 v1.6+ C3：从原 455 行 ``pipeline.py`` 拆出，独立模块。
+v1.8+ 加 ``dry_run`` / ``sample_n`` / ``preview_dir`` 三个 kwarg；
+       ``_process_one`` 加 ``save`` kwarg（False 时返回元数据，不写盘）。
 """
 
 from __future__ import annotations
 
 import argparse
+import time
 from itertools import chain, islice
 from pathlib import Path
 
@@ -39,6 +43,9 @@ from book_cut.pipeline.outline import (
     _write_pdf_with_outline,
 )
 from book_cut.preprocess.binarize import binarize
+
+# v1.8+ dry-run：per-step 计时开关（避免影响 v1.7 行为；正式版可保持 True）
+_TIMING_ENABLED = True
 
 
 def _split_from_array(arr: np.ndarray, strategy: str, auto_single_page: bool = True) -> list:
@@ -131,6 +138,183 @@ def _reverse_pair(sub_pages: list) -> list:
     return sub_pages
 
 
+# ----------------------------------------------------------------------------
+# v1.8+ dry-run 辅助：split confidence 量化
+# ----------------------------------------------------------------------------
+
+
+def _compute_split_confidence(
+    arr: np.ndarray,
+    strategy: str,
+    sub_arrs: list,
+    split_x: int | None,
+) -> float:
+    """split 质量量化（0-1）—— 给 dry-run preview 调参用。
+
+    - gutter: 中心偏离度反向 + 连续白段宽度
+    - border: 假设 Hough 找到 4 条线且围成矩形
+    - half: 1.0（无检测）
+    """
+    w = arr.shape[1] if arr.ndim == 2 else arr.shape[1]
+    if strategy == "half":
+        return 1.0
+    if strategy == "gutter" and split_x is not None and len(sub_arrs) == 2:
+        center = w / 2.0
+        offset_ratio = abs(split_x - center) / center  # 0=正中, 1=最边缘
+        if offset_ratio > 0.2:
+            return 0.0  # 偏离 > 20% → 极不可信
+        # 用子图尺寸比例 + 子图左/右大小差异（理想 1.0）
+        left_w = sub_arrs[0].shape[1]
+        right_w = sub_arrs[1].shape[1]
+        balance = min(left_w, right_w) / max(left_w, right_w)  # 1.0=完美对称
+        return round((1.0 - offset_ratio * 5) * balance, 3)
+    if strategy == "border" and len(sub_arrs) == 2:
+        # border 假定找到了版框，子图尺寸合理（一般 > 200px）
+        left_w = sub_arrs[0].shape[1]
+        right_w = sub_arrs[1].shape[1]
+        if min(left_w, right_w) < 100:
+            return 0.3
+        balance = min(left_w, right_w) / max(left_w, right_w)
+        return round(0.8 * balance, 3)
+    return 0.5  # 单页 / 未知情况
+
+
+def _compute_page(
+    page: PageInfo,
+    *,
+    deskew_enabled: bool,
+    auto_single_page: bool,
+    page_order: str,
+    crop_mode: str,
+    binarize_method: str,
+    crop_config,
+    paper_deviation: float,
+    split_strategy: str,
+    half_offset: int,
+    use_morph: bool,
+    is_sampled_page: bool,
+) -> dict:
+    """v1.8+ 抽出的纯计算：处理单页但不写盘。
+
+    Returns:
+        ``{"original", "sub_pages", "metrics", "page_rects", "sub_arrs", "split_x"}``
+    """
+    from book_cut.split.border import split_border_with_rects_from_array
+    from book_cut.split.gutter import find_gutter_column_from_array
+    from book_cut.split.half import split_half_from_array
+
+    image = page.image
+    t0 = time.perf_counter() if _TIMING_ENABLED else 0.0
+
+    # 1. deskew
+    if deskew_enabled:
+        from book_cut.preprocess.deskew import deskew_from_array
+
+        arr_for_deskew = np.asarray(image.convert("L"))
+        arr = deskew_from_array(arr_for_deskew)
+    else:
+        arr = np.asarray(image.convert("L"))
+    t_deskew = time.perf_counter() - t0 if _TIMING_ENABLED else 0.0
+
+    # 2. split
+    t_split_start = time.perf_counter() if _TIMING_ENABLED else 0.0
+    page_rects: list | None = None
+    split_x: int | None = None
+    if split_strategy == "half":
+        sub_arrs = split_half_from_array(arr, offset=half_offset)
+    elif split_strategy == "border":
+        result = split_border_with_rects_from_array(arr)
+        sub_arrs = result.sub_arrays
+        page_rects = result.page_rects
+    else:
+        sub_arrs = _split_from_array(arr, split_strategy, auto_single_page=auto_single_page)
+        if split_strategy == "gutter" and len(sub_arrs) == 2:
+            split_x = find_gutter_column_from_array(arr)
+    t_split = time.perf_counter() - t_split_start if _TIMING_ENABLED else 0.0
+
+    # RTL flip
+    if page_order == "rtl" and len(sub_arrs) == 2:
+        sub_arrs = [sub_arrs[1], sub_arrs[0]]
+        if page_rects is not None:
+            page_rects = [page_rects[1], page_rects[0]]
+
+    # 3. crop
+    t_crop_start = time.perf_counter() if _TIMING_ENABLED else 0.0
+    if crop_mode == "none":
+        sub_pages = [Image.fromarray(a, mode="L") for a in sub_arrs]
+    elif is_sampled_page:
+        configs = [crop_config] * len(sub_arrs)
+        sub_pages = _crop_pages_from_arrays(
+            sub_arrs, crop_mode, configs=configs, use_morph=use_morph, page_rects=page_rects
+        )
+    else:
+        per_page_configs = [
+            _resolve_per_page_config(a, crop_config, paper_deviation) for a in sub_arrs
+        ]
+        sub_pages = _crop_pages_from_arrays(
+            sub_arrs,
+            crop_mode,
+            configs=per_page_configs,
+            use_morph=use_morph,
+            page_rects=page_rects,
+        )
+    t_crop = time.perf_counter() - t_crop_start if _TIMING_ENABLED else 0.0
+
+    # 4. binarize
+    t_bin_start = time.perf_counter() if _TIMING_ENABLED else 0.0
+    if binarize_method != "none":
+        sub_pages = [binarize(p, binarize_method) for p in sub_pages]
+    t_bin = time.perf_counter() - t_bin_start if _TIMING_ENABLED else 0.0
+
+    # metrics
+    confidence = _compute_split_confidence(arr, split_strategy, sub_arrs, split_x)
+    page_metrics = {
+        "page_idx": page.page_index,
+        "source": page.source_name,
+        "size_in": list(image.size),
+        "deskew": {
+            "applied": deskew_enabled,
+            "angle": None,
+            "method": "hough" if deskew_enabled else None,
+        },
+        "split": {
+            "method": split_strategy,
+            "x": split_x,
+            "confidence": confidence,
+            "fallback_used": False,
+            "fallback_reason": None,
+            "size_left": list(sub_pages[0].size) if sub_pages else None,
+            "size_right": list(sub_pages[1].size) if len(sub_pages) > 1 else None,
+        },
+        "crop": {"method": crop_mode, "fallback_used": False},
+        "binarize": {
+            "method": binarize_method,
+            "window": 25 if binarize_method == "sauvola" else None,
+            "k": 0.2 if binarize_method == "sauvola" else None,
+        },
+        "timings_ms": {
+            "deskew": round(t_deskew * 1000, 2),
+            "split": round(t_split * 1000, 2),
+            "crop": round(t_crop * 1000, 2),
+            "binarize": round(t_bin * 1000, 2),
+        },
+        "warnings": [],
+    }
+
+    return {
+        "original": image,
+        "sub_pages": sub_pages,
+        "sub_arrs": sub_arrs,
+        "page_rects": page_rects,
+        "split_x": split_x,
+        "metrics": page_metrics,
+    }
+
+
+
+
+
+
 def run_pipeline(args: argparse.Namespace) -> None:
     """根据 CLI args 运行整条流水线（v1.5+ B1：流式）。
 
@@ -139,9 +323,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
     v1.6+ C3：本函数迁到 ``pipeline/orchestrator.py``，outline 与 crop_config
     拆到独立模块，行为完全不变。
+    v1.8+：支持 ``dry_run`` 模式（仅跑前 N 页 + 写 preview，不写盘）。
     """
     output_dir = Path(args.output)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    dry_run: bool = bool(getattr(args, "dry_run", False))
+    # v1.8+ dry-run：不创建输出目录（避免污染用户文件系统）
+    if not dry_run:
+        output_dir.mkdir(parents=True, exist_ok=True)
 
     input_path = Path(args.input)
     fmt: ImageFormat = args.format
@@ -256,89 +444,19 @@ def run_pipeline(args: argparse.Namespace) -> None:
     # v1.5+ per-page override：偏离阈值（CLI --paper-deviation，默认 30）
     paper_deviation: float = float(getattr(args, "paper_deviation", 30))
 
-    def _process_one(page: PageInfo, is_sampled_page: bool = False) -> None:
-        """处理单页：deskew → split → crop → binarize → save_image.
+    # v1.8+ dry-run：采样数 / 预览输出目录（dry_run 已在函数顶部定义）
+    sample_n: int = max(1, int(getattr(args, "sample_n", 3)))
+    preview_dir: Path | None = (
+        Path(args.preview_output) if getattr(args, "preview_output", None) else None
+    )
 
-        v1.5+ per-page override：每张子图独立决定 config（书级 vs per-page）。
-        is_sampled_page=True（采样阶段用过的前 N 页）跳过 override，避免自我引用。
-        """
+    # 公共单页处理（v1.8+ 拆出）：用纯计算函数 + 不同的"保存策略"
+    def _save_subpages(sub_pages: list, page: PageInfo) -> None:
+        """把 sub_pages 写盘（v1.7 fit-to-target + v1.4 outline 映射 + v1.8 dry-run skip）。"""
         nonlocal counter
-        image = page.image
-
-        # 1. 可选：倾斜校正（在切分/裁切之前）
-        # v1.5+ A1：走 arr 路径，跳过重复 convert("L")
-        if deskew_enabled:
-            from book_cut.preprocess.deskew import deskew_from_array
-
-            arr_for_deskew = np.asarray(image.convert("L"))
-            arr = deskew_from_array(arr_for_deskew)
-        else:
-            # v1.5+ A1：主循环唯一一次 RGB→L 转换（uint8，省内存）
-            arr = np.asarray(image.convert("L"))
-
-        # 2. 切分（可能产生 1 张单页或 2 张双页）
-        offset = getattr(args, "half_offset", 0)
-        # v1.6+ A3：split=border 时用 split_border_with_rects 拿到每页 rect
-        # 给下游 crop 复用 Hough 结果，省一次 Hough（约 4ms/页）
-        page_rects: list | None = None
-        if args.split == "half":
-            from book_cut.split.half import split_half_from_array
-
-            sub_arrs = split_half_from_array(arr, offset=offset)
-        elif args.split == "border":
-            from book_cut.split.border import split_border_with_rects_from_array
-
-            result = split_border_with_rects_from_array(arr)
-            sub_arrs = result.sub_arrays
-            page_rects = result.page_rects
-        else:
-            sub_arrs = _split_from_array(arr, args.split, auto_single_page=auto_single_page)
-
-        # v1.4：RTL 模式下，1:2 切分翻成 [右, 左]
-        # v1.6+ A3：RTL 翻 [sub_arrs, page_rects] 同步
-        if page_order == "rtl" and len(sub_arrs) == 2:
-            sub_arrs = [sub_arrs[1], sub_arrs[0]]
-            if page_rects is not None:
-                page_rects = [page_rects[1], page_rects[0]]
-
-        # 3. 可选：裁切（白边 / 版框内裁）—— arr 路径
-        # v1.5+ per-page override：每张子图独立决策 config
-        # v1.6+ B线：use_morph 控制形态学（--no-morph 关闭）
-        # v1.6+ A3：page_rects 给 crop 复用 split 阶段的 Hough 结果
-        if crop_mode == "none":
-            sub_pages = [Image.fromarray(a, mode="L") for a in sub_arrs]
-        elif is_sampled_page:
-            # 采样页：用书级 config（避免 override 自我引用，proposal §10.2）
-            configs = [crop_config] * len(sub_arrs)
-            sub_pages = _crop_pages_from_arrays(
-                sub_arrs,
-                crop_mode,
-                configs=configs,
-                use_morph=use_morph,
-                page_rects=page_rects,
-            )
-        else:
-            # 每张子图独立决策（per-page override）
-            per_page_configs = [
-                _resolve_per_page_config(a, crop_config, paper_deviation)
-                for a in sub_arrs
-            ]
-            sub_pages = _crop_pages_from_arrays(
-                sub_arrs,
-                crop_mode,
-                configs=per_page_configs,
-                use_morph=use_morph,
-                page_rects=page_rects,
-            )
-
-        # 4. 可选：二值化 —— 公共 API（内部薄包装对 L 模式图无 convert 开销）
-        if binarize_method != "none":
-            sub_pages = [binarize(p, binarize_method) for p in sub_pages]
-
         # v1.4：记录原页 → 输出页映射（仅当输入是 outline source PDF 的页）
         if src_pdf_stem is not None and page.source_name == src_pdf_stem:
             outline_mapping[page.page_index] = list(range(counter, counter + len(sub_pages)))
-
         for p in sub_pages:
             counter += 1
             # v1.7：fit-to-target（target_size is None → keep 原图）
@@ -347,13 +465,66 @@ def run_pipeline(args: argparse.Namespace) -> None:
             image_paths.append(save_image(p, output_dir, book_name, counter, fmt=fmt))
 
     # 采样阶段用了前 paper_pages_n 页（islice chain 顺序保证）。
-    # 主循环用 enumerate 区分"采样页"（前 N-1，因为 first_page 已取出）vs 真实页。
     sampled_remaining = paper_pages_n - 1  # 已取 first_page，剩 N-1 个
-    _process_one(first_page, is_sampled_page=True)
+
+    if dry_run:
+        # v1.8+ dry-run 模式：仅跑前 sample_n 页 + 渲染预览，不写盘、不生成 PDF
+        from book_cut.pipeline.dry_run import run_dry_run as _dry_run
+
+        _dry_run(
+            first_page=first_page,
+            full_iter=full_iter,
+            sampled_remaining=sampled_remaining,
+            sample_n=sample_n,
+            preview_dir=preview_dir,
+            input_path=input_path,
+            deskew_enabled=deskew_enabled,
+            auto_single_page=auto_single_page,
+            page_order=page_order,
+            crop_mode=crop_mode,
+            binarize_method=binarize_method,
+            crop_config=crop_config,
+            paper_deviation=paper_deviation,
+            split_strategy=args.split,
+            half_offset=getattr(args, "half_offset", 0),
+            use_morph=use_morph,
+        )
+        return  # dry-run 提前退出：不写 image_paths，不生成 PDF
+
+    # 正常模式：每页 compute + save
+    first_result = _compute_page(
+        first_page,
+        deskew_enabled=deskew_enabled,
+        auto_single_page=auto_single_page,
+        page_order=page_order,
+        crop_mode=crop_mode,
+        binarize_method=binarize_method,
+        crop_config=crop_config,
+        paper_deviation=paper_deviation,
+        split_strategy=args.split,
+        half_offset=getattr(args, "half_offset", 0),
+        use_morph=use_morph,
+        is_sampled_page=True,
+    )
+    _save_subpages(first_result["sub_pages"], first_page)
 
     # tqdm 包装剩余 iterator（total 不知道 → 不显示 ETA，但有进度计数）
     for i, page in enumerate(tqdm(full_iter, desc="切分", initial=1)):
-        _process_one(page, is_sampled_page=(i < sampled_remaining))
+        result = _compute_page(
+            page,
+            deskew_enabled=deskew_enabled,
+            auto_single_page=auto_single_page,
+            page_order=page_order,
+            crop_mode=crop_mode,
+            binarize_method=binarize_method,
+            crop_config=crop_config,
+            paper_deviation=paper_deviation,
+            split_strategy=args.split,
+            half_offset=getattr(args, "half_offset", 0),
+            use_morph=use_morph,
+            is_sampled_page=(i < sampled_remaining),
+        )
+        _save_subpages(result["sub_pages"], page)
 
     if getattr(args, "pdf", False):
         assert pdf_path_final is not None
