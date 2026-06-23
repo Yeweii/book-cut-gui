@@ -27,7 +27,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from book_cut.detect._utils import adaptive_padding, to_L_image, to_gray_array
+from book_cut.detect._utils import adaptive_padding, to_gray_array, to_L_image
 
 if TYPE_CHECKING:
     from book_cut.detect.paper import CropConfig
@@ -42,7 +42,7 @@ def _to_L_image(arr_u8: np.ndarray) -> Image.Image:
 
 
 def _safety_margin(h: int, w: int) -> int:
-    """v1.6+ B线：贴边保护阈值。
+    """v1.6+ B线：贴边保护阈值（严格模式）。
 
     公式：``max(5, int(min(h, w) * 0.01))``。
     - 4000×4000 → 40px
@@ -51,6 +51,27 @@ def _safety_margin(h: int, w: int) -> int:
     短边 < 500px 时退化到 5px（floor）。
     """
     return max(5, int(min(h, w) * 0.01))
+
+
+def _safety_margin_relaxed(h: int, w: int) -> int:
+    """v1.8.2+：放宽的贴边保护阈值（fallback 模式）。
+
+    严格 safety 命中（内容贴边）→ 仍想尝试裁切时使用。
+    公式：``max(2, int(min(h, w) * 0.005))`` —— 比严格模式减半。
+    - 4000×4000 → 20px
+    - 500×500 → 2px (floor)
+    """
+    return max(2, int(min(h, w) * 0.005))
+
+
+def _safety_check(top: int, bottom: int, left: int, right: int, h: int, w: int, safety: int) -> bool:
+    """检测内容是否在 safety 内（True = 贴边，需要 fallback 或放弃）。"""
+    return (
+        top < safety
+        or bottom > h - safety - 1
+        or left < safety
+        or right > w - safety - 1
+    )
 
 
 def _clean_ink_mask(ink_mask: np.ndarray, use_morph: bool) -> np.ndarray:
@@ -62,6 +83,11 @@ def _clean_ink_mask(ink_mask: np.ndarray, use_morph: bool) -> np.ndarray:
     - 3×3 实心块 → 保留
     - 文字笔画（≥ 4 像素宽）→ 保留
 
+    v1.8.2+：稀疏墨迹保护。
+    实测发现：5% 密度随机噪点（扫描 PDF 常见情况）走 MORPH_OPEN 后**全部消失**，
+    因为 3×3 erode 会清除所有孤立像素，导致 trim 以为"无内容"→ 不裁。
+    修复：先用连通域分析判断是否真有"小噪点"，有则清掉；否则跳过。
+
     Args:
         ink_mask: 灰度图转出的二值 mask（bool 或 uint8）。
         use_morph: True 走 MORPH_OPEN；False 跳过（古籍飞白/极小字可见）。
@@ -72,6 +98,14 @@ def _clean_ink_mask(ink_mask: np.ndarray, use_morph: bool) -> np.ndarray:
     if not use_morph:
         return ink_mask.astype(bool)
     mask_u8 = ink_mask.astype(np.uint8)
+    h, w = mask_u8.shape
+    total_ink = int(mask_u8.sum())
+    if total_ink == 0:
+        return mask_u8.astype(bool)
+    # v1.8.2+：若墨迹密度 < 0.5%，跳过 morph（否则会把稀疏笔画清光）
+    density = total_ink / (h * w)
+    if density < 0.005:
+        return mask_u8.astype(bool)
     cleaned = cv2.morphologyEx(mask_u8, cv2.MORPH_OPEN, np.ones((3, 3), np.uint8))
     return cleaned.astype(bool)
 
@@ -127,10 +161,14 @@ def _trim_margins_from_array(
     left = int(cols_idx[0])
     right = int(cols_idx[-1])
 
-    # v1.6+ B线：safety margin 检查 —— 内容贴边 → 不裁
-    safety = _safety_margin(h, w)
-    if (top < safety or bottom > h - safety - 1 or left < safety or right > w - safety - 1):
-        return _to_L_image(arr)
+    # v1.6+ B线 → v1.8.2+：safety margin 二级 fallback。
+    # 1) 严格 safety 命中（内容贴边）→ 放宽到 relaxed safety 重试
+    # 2) relaxed safety 仍命中 → 放弃整页（保守策略：宁可漏裁不伤字）
+    safety_strict = _safety_margin(h, w)
+    if _safety_check(top, bottom, left, right, h, w, safety_strict):
+        safety_relaxed = _safety_margin_relaxed(h, w)
+        if _safety_check(top, bottom, left, right, h, w, safety_relaxed):
+            return _to_L_image(arr)
 
     # 应用 padding（不超出原图）
     top = max(0, top - pad)

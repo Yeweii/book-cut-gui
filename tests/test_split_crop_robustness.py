@@ -190,14 +190,61 @@ def test_t6b_large_crease_5x20_preserved():
 
 
 def test_t7_safety_margin_protects_edge_content():
-    """T7：内容贴图边（< 5px）→ safety margin 触发 → 不裁（返回原图）。"""
+    """T7：内容贴图边（< 5px）→ safety margin 触发 → 不裁（返回原图）。
+
+    v1.8.2+：relaxed safety (max(2, h*0.005)) = 2 → 内容 col 0-1 仍在 relaxed 内 → 不裁
+    """
     arr = np.full((500, 800), 255, dtype=np.uint8)
     # 内容贴左边：cols 0-3（贴边 3px）
     arr[100:400, 0:4] = 30
 
     out = _trim_margins_from_array(arr, padding=2, use_morph=True)
-    # safety = max(5, int(500*0.01)) = 5 → 内容距左边 0 < 5 → 不裁
+    # safety_strict = max(5, int(500*0.01)) = 5 → 内容距左边 0 < 5 → strict hit
+    # safety_relaxed = max(2, int(500*0.005)) = 2 → 内容距左边 0 < 2 → relaxed hit → 仍不裁
     assert out.size == (800, 500), f"应返回原图，实际 {out.size}"
+
+
+def test_t7b_safety_margin_fallback_recovers_border_line():
+    """v1.8.2+ T7b：版框线距边 3-4px → 严格 safety 命中但 relaxed 通过 → 二级 fallback 裁切。
+
+    模拟古籍扫描的版框线：距图边 ~3-4px。
+    v1.6+ 严格 safety=5 触发 → 不裁。
+    v1.8.2+ relaxed safety=2 让步 → 裁切命中。
+    """
+    arr = np.full((500, 800), 255, dtype=np.uint8)
+    # 版框线：距左边 3px（严格 5 不通过、relaxed 2 通过）
+    arr[100:400, 3:4] = 30
+    # 内容主体
+    arr[150:350, 100:500] = 30
+
+    out = _trim_margins_from_array(arr, padding=2, use_morph=False)
+    # 版框线 col 3 → left=3 → 3 >= relaxed_safety=2 → 裁切命中
+    # 应裁到 (col=3-pad..col=499+pad, row=100-pad..row=399+pad)
+    assert out.size[0] < 800, f"应裁切宽度，实际 {out.size[0]}"
+    assert out.size[1] < 500, f"应裁切高度，实际 {out.size[1]}"
+
+
+def test_t7c_sparse_ink_protection():
+    """v1.8.2+ T7c：稀疏墨迹（密度 < 0.5%）→ 跳过 MORPH_OPEN 避免误清光。
+
+    旧版 v1.6+ 在稀疏内容上跑 MORPH_OPEN → 3x3 erode 把孤立墨迹全清光 → trim 找不到边界。
+    """
+    arr = np.full((500, 800), 255, dtype=np.uint8)
+    # 稀疏墨迹：每 10 px 一个黑点（密度 ~1%）
+    for row in range(100, 400, 10):
+        for col in range(100, 700, 10):
+            arr[row, col] = 30
+
+    # 计算实际密度
+    ink = (arr < 240).sum()
+    density = ink / arr.size
+    assert 0.001 < density < 0.005, f"测试数据密度应 < 0.5%，实际 {density:.4f}"
+
+    out = _trim_margins_from_array(arr, padding=2, use_morph=True)
+    # v1.8.2+：密度 < 0.5% 跳过 morph → 应裁切命中
+    assert out.size[0] < 800 or out.size[1] < 500, (
+        f"稀疏墨迹保护失败：未裁切，size={out.size}"
+    )
 
 
 def test_t8_4to5px_kai_script_strokes_preserved():
