@@ -43,21 +43,109 @@ def _load_image(path: Path) -> Image.Image:
     return img
 
 
+def _render_page_pixmap(page, mat):
+    """v1.9.2+：渲染单页，多策略 fallback。
+
+    策略（按顺序试，第一个成功就用）：
+    1. 标准 RGB 渲染（300 DPI 默认）
+    2. 不带 alpha（避免 alpha 通道 decode 失败）
+    3. 1x1 DPI（极低分辨率，让 MuPDF 走不同 code path，可能绕过 filter）
+    4. 返回 None → 全部失败，调用方生成占位图
+
+    真实场景：某些古籍 PDF 用 MuPDF 不识别的 image filter（JBIG2/JPEG2000
+    自定义 codec / Flate 异常 predictor），300 DPI 渲染会抛
+    "Error -3 while decompressing data: unknown compression method"。
+    降 DPI 偶尔能绕过（让 MuPDF 走不同的缓存策略）。
+    """
+    import pymupdf
+
+    strategies = [
+        ("rgb", mat),
+        ("no_alpha", mat),
+        ("low_dpi", pymupdf.Matrix(1, 1)),
+    ]
+    last_err: Exception | None = None
+    for name, m in strategies:
+        try:
+            if name == "no_alpha":
+                pix = page.get_pixmap(matrix=m, alpha=False)
+            else:
+                pix = page.get_pixmap(matrix=m, alpha=False)
+            return pix
+        except Exception as e:  # noqa: BLE001
+            last_err = e
+            continue
+    # 全部失败
+    if last_err is not None:
+        raise last_err
+    return None
+
+
+def _placeholder_page(pdf_path: Path, idx: int, last_err: Exception) -> Image.Image:
+    """v1.9.2+：渲染完全失败的页 → 生成白底占位图（带错误文本）。"""
+    img = Image.new("RGB", (1200, 1600), "white")
+    try:
+        from PIL import ImageDraw, ImageFont
+
+        draw = ImageDraw.Draw(img)
+        msg_lines = [
+            f"Page {idx + 1} render failed",
+            f"File: {pdf_path.name}",
+            f"Error: {type(last_err).__name__}: {str(last_err)[:120]}",
+            "(PyMuPDF could not decode an image in this page)",
+        ]
+        try:
+            font = ImageFont.load_default()
+        except Exception:
+            font = None
+        y = 40
+        for line in msg_lines:
+            draw.text((40, y), line, fill="black", font=font)
+            y += 40
+    except Exception:  # noqa: BLE001
+        pass
+    return img
+
+
 def _iter_pdf(pdf_path: Path, dpi: int = 300) -> Iterator[PageInfo]:
-    """流式遍历 PDF 每一页。"""
+    """流式遍历 PDF 每一页。
+
+    v1.9.2+：单页渲染失败不再让整本 PDF 中断。
+    降 DPI / 去 alpha 仍失败时生成白底占位图（含错误文本），
+    让用户至少看到"哪一页失败"再决定重扫或换工具。
+    """
     import pymupdf  # 延迟导入：未用到 PDF 时无需该依赖
 
     doc = pymupdf.open(pdf_path)
     source_name = pdf_path.stem
+    failed_pages: list[tuple[int, str]] = []
     try:
         zoom = dpi / 72.0
         mat = pymupdf.Matrix(zoom, zoom)
         for idx, page in enumerate(doc):
-            pix = page.get_pixmap(matrix=mat, alpha=False)
-            img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            try:
+                pix = _render_page_pixmap(page, mat)
+                if pix is None:
+                    raise RuntimeError("all render strategies returned None")
+                img = Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            except Exception as e:  # noqa: BLE001
+                # 单页失败：记录 + 占位图，不中断整本
+                failed_pages.append((idx + 1, f"{type(e).__name__}: {str(e)[:160]}"))
+                img = _placeholder_page(pdf_path, idx, e)
             yield PageInfo(image=img, source_name=source_name, page_index=idx)
     finally:
         doc.close()
+        if failed_pages:
+            import sys
+
+            print(
+                f"[WARN] {pdf_path.name}: {len(failed_pages)} 页渲染失败（已用占位图替代）：",
+                file=sys.stderr,
+            )
+            for page_num, err in failed_pages[:10]:
+                print(f"  - p{page_num}: {err}", file=sys.stderr)
+            if len(failed_pages) > 10:
+                print(f"  ... 还有 {len(failed_pages) - 10} 页", file=sys.stderr)
 
 
 # ----------------------------------------------------------------------------
