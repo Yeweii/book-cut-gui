@@ -113,6 +113,7 @@ def _run_pipeline_thread(
     output_path: Path,
     values: dict,
     log_queue: queue.Queue,
+    cancel_event: threading.Event,
 ) -> None:
     """在线程中跑 pipeline；日志通过 queue 推到主线程。"""
     args = argparse.Namespace(input=str(input_path), output=str(output_path), **values)
@@ -121,8 +122,11 @@ def _run_pipeline_thread(
     sys.stdout = _QueueWriter(log_queue, "log")
     sys.stderr = _QueueWriter(log_queue, "log")
     try:
-        run_pipeline(args)
-        log_queue.put(("done", "✅ 处理完成"))
+        run_pipeline(args, cancel_event=cancel_event)
+        if cancel_event.is_set():
+            log_queue.put(("done", "⏹ 已停止"))
+        else:
+            log_queue.put(("done", "✅ 处理完成"))
     except Exception as e:  # noqa: BLE001
         log_queue.put(("error", _format_error(e)))
     finally:
@@ -436,6 +440,9 @@ def run_gui() -> None:
     progress = ttk.Progressbar(root, mode="indeterminate")
     progress.grid(row=8, column=0, columnspan=3, sticky="ew", padx=8, pady=(12, 4))
 
+    # v1.8.1+ cancel event：每次 on_run 新建一个，透传给 pipeline thread
+    cancel_event_holder: list[threading.Event | None] = [None]
+
     # 执行按钮
     def on_run() -> None:
         if not input_var.get() or not output_var.get():
@@ -449,7 +456,10 @@ def run_gui() -> None:
         log_text.configure(state="disabled")
         running_var.set(True)
         run_btn.config(state="disabled")
+        stop_btn.config(state="normal")
         progress.start(80)
+        # 新建 cancel event
+        cancel_event_holder[0] = threading.Event()
 
         values = {
             "split": split_var.get(),
@@ -474,13 +484,32 @@ def run_gui() -> None:
         }
         t = threading.Thread(
             target=_run_pipeline_thread,
-            args=(Path(input_var.get()), Path(output_var.get()), values, log_queue),
+            args=(
+                Path(input_var.get()),
+                Path(output_var.get()),
+                values,
+                log_queue,
+                cancel_event_holder[0],
+            ),
             daemon=True,
         )
         t.start()
 
+    def on_stop() -> None:
+        if not running_var.get():
+            return
+        ev = cancel_event_holder[0]
+        if ev is not None and not ev.is_set():
+            ev.set()
+            stop_btn.config(state="disabled")
+            log_queue.put(("log", "⏹ 正在停止..."))
+
     run_btn = ttk.Button(root, text="开始处理", command=on_run)
-    run_btn.grid(row=9, column=0, columnspan=3, pady=8)
+    run_btn.grid(row=9, column=0, columnspan=2, pady=8, sticky="ew")
+
+    # v1.8.1+ 停止按钮：初始 disabled；on_run 时启用；on_stop / 完成时禁用
+    stop_btn = ttk.Button(root, text="停止", command=on_stop, state="disabled")
+    stop_btn.grid(row=9, column=2, pady=8, sticky="ew")
 
     # v1.8+ dry-run：执行后启用"打开预览目录"按钮
     def _open_preview_dir() -> None:
@@ -533,14 +562,11 @@ def run_gui() -> None:
                 if tag in ("done", "error"):
                     progress.stop()
                     run_btn.config(state="normal")
+                    stop_btn.config(state="disabled")
                     running_var.set(False)
                     # v1.8+ dry-run 完成后启用"打开预览目录"按钮
                     if tag == "done" and dry_run_var.get() and preview_dir_var.get():
                         open_preview_btn.config(state="normal")
-                    if tag == "error":
-                        messagebox.showerror("处理出错", msg)
-                    run_btn.config(state="normal")
-                    running_var.set(False)
                     if tag == "error":
                         messagebox.showerror("处理出错", msg)
         except queue.Empty:

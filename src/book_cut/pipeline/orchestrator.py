@@ -16,6 +16,7 @@ v1.8+ 加 ``dry_run`` / ``sample_n`` / ``preview_dir`` 三个 kwarg；
 from __future__ import annotations
 
 import argparse
+import threading
 import time
 from itertools import chain, islice
 from pathlib import Path
@@ -315,7 +316,7 @@ def _compute_page(
 
 
 
-def run_pipeline(args: argparse.Namespace) -> None:
+def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None = None) -> None:
     """根据 CLI args 运行整条流水线（v1.5+ B1：流式）。
 
     关键：不再 ``list(iter_pages(...))``，主循环直接迭代 generator，
@@ -324,6 +325,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
     v1.6+ C3：本函数迁到 ``pipeline/orchestrator.py``，outline 与 crop_config
     拆到独立模块，行为完全不变。
     v1.8+：支持 ``dry_run`` 模式（仅跑前 N 页 + 写 preview，不写盘）。
+    v1.8.1+：支持 ``cancel_event``（每页边界检查，True 则 break 优雅停止）。
     """
     output_dir = Path(args.output)
     dry_run: bool = bool(getattr(args, "dry_run", False))
@@ -488,6 +490,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
             split_strategy=args.split,
             half_offset=getattr(args, "half_offset", 0),
             use_morph=use_morph,
+            cancel_event=cancel_event,
         )
         return  # dry-run 提前退出：不写 image_paths，不生成 PDF
 
@@ -508,8 +511,13 @@ def run_pipeline(args: argparse.Namespace) -> None:
     )
     _save_subpages(first_result["sub_pages"], first_page)
 
-    # tqdm 包装剩余 iterator（total 不知道 → 不显示 ETA，但有进度计数）
+    # v1.8.1+ cancel：在每页边界检查（单页计算是原子的，不可中断）
+    cancelled = False
     for i, page in enumerate(tqdm(full_iter, desc="切分", initial=1)):
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            print(f"[INFO] 用户取消：已处理 {counter} 张图（在第 {i + 1} 页边界停止）")
+            break
         result = _compute_page(
             page,
             deskew_enabled=deskew_enabled,
@@ -526,7 +534,8 @@ def run_pipeline(args: argparse.Namespace) -> None:
         )
         _save_subpages(result["sub_pages"], page)
 
-    if getattr(args, "pdf", False):
+    # 取消时不写 PDF（避免半截输出）
+    if getattr(args, "pdf", False) and not cancelled:
         assert pdf_path_final is not None
         _write_pdf_with_outline(
             image_paths=image_paths,

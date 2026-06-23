@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import tempfile
+import threading
 import time
 from itertools import islice
 from pathlib import Path
@@ -35,6 +36,7 @@ def run_dry_run(
     split_strategy: str,
     half_offset: int,
     use_morph: bool,
+    cancel_event: threading.Event | None = None,
 ) -> None:
     """跑 dry-run：处理前 sample_n 页 + 渲染预览 + 写 summary。
 
@@ -65,7 +67,12 @@ def run_dry_run(
     )
     sample_results.append(first_result)
 
+    cancelled = False
     for i, page in enumerate(islice(full_iter, sample_n - 1)):
+        if cancel_event is not None and cancel_event.is_set():
+            cancelled = True
+            print(f"[INFO] 用户取消：dry-run 采样在第 {i + 1} 页边界停止")
+            break
         result = _compute_page(
             page,
             deskew_enabled=deskew_enabled,
@@ -135,8 +142,9 @@ def run_dry_run(
     )
 
     write_preview(out_preview_dir, compare_images, pages_metrics, summary)
+    status = "取消" if cancelled else "完成"
     print(
-        f"[OK] dry-run 完成：采样 {len(sample_results)} 页 → {out_preview_dir}\n"
+        f"[OK] dry-run {status}：采样 {len(sample_results)} 页 → {out_preview_dir}\n"
         f"     对比图: preview_p*_compare.png × {len(compare_images)}\n"
         f"     指标: preview_summary.json"
     )
