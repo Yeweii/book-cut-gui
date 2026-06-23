@@ -6,6 +6,10 @@ Canny/Hough 参数保持静态（几何检测，不受 paper color 影响）。
 
 v1.5+ A1：``crop_to_border_from_array`` 私有变体接受 ndarray，pipeline 跳过重复 ``convert("L")``。
 v1.6+ A线：默认 ``padding`` 由 5 翻倍到 10，保护贴版框字符（4-5px 笔画）。
+v1.9.2 A：外框候选过滤 —— 候选 x/y 位置必须在该位置上有连续 ≥ ``min_outer_span`` 的
+dark run（竖线 ≥ ``min_v_span`` ≈ 0.4 h，横线 ≥ ``min_h_span`` ≈ 0.4 w）。
+古籍扫描常常**只有内栏线、没有完整外框**，Hough 容易把栏线当成外框误裁。
+要求"贯穿"过滤掉栏线候选；若过滤后 < 2 竖 / < 2 横 → fallback trim。
 """
 
 from __future__ import annotations
@@ -93,15 +97,64 @@ def crop_to_border_from_array(
         return _trim_margins_from_array(arr, padding=padding, config=config, use_morph=use_morph)
 
     vs, hs = result
-    if len(vs) < 2 or len(hs) < 2:
+
+    # v1.9.2 A：外框候选过滤 —— Hough 检测到的 vs/hs 包含栏线 / 注释横线等"短候选"，
+    # 真正的外框必须**贯穿**相当比例的图。检查每个候选 x/y 位置的最长连续 dark run：
+    # - 竖线候选 x：该列最长连续 dark run ≥ 0.4 * h 才算外框
+    # - 横线候选 y：该行最长连续 dark run ≥ 0.4 * w 才算外框
+    # 古籍扫描常常"有栏线无外框"，不这样过滤会把栏线当成外框误裁内容。
+    # v1.9.2 A fix：Hough 代表坐标（簇中位数）可能比真实墨迹列偏 1-2 px
+    # （PIL outline=2 在目标 x 两侧各画 1px，但 Hough 检测的"线"取的是
+    # 边缘梯度的中点）。检查 ±1 邻域的最长 run，避免误杀。
+    min_v_span = int(0.4 * h)
+    min_h_span = int(0.4 * w)
+
+    def _longest_dark_run(strip: np.ndarray, dark_thr: int = 240) -> int:
+        """strip 上最长连续 dark 像素长度。"""
+        if strip.size == 0:
+            return 0
+        is_dark = strip < dark_thr
+        if not is_dark.any():
+            return 0
+        # 找最长 True 连续段
+        changes = np.diff(is_dark.astype(np.int8))
+        starts = np.where(changes == 1)[0] + 1
+        ends = np.where(changes == -1)[0] + 1
+        if is_dark[0]:
+            starts = np.concatenate(([0], starts))
+        if is_dark[-1]:
+            ends = np.concatenate((ends, [len(is_dark)]))
+        return int((ends - starts).max())
+
+    def _col_run(x: int) -> int:
+        """x 附近 ±1 列的最长连续 dark run（Hough 坐标可能有 ±1-2 偏移）。
+
+        取窗口内每列的 run，取最大值（不能 flatten，否则跨列的 dark 会被错位断开）。
+        """
+        lo, hi = max(0, x - 1), min(w, x + 2)
+        if lo >= hi:
+            return 0
+        return max(_longest_dark_run(arr[:, cx]) for cx in range(lo, hi))
+
+    def _row_run(y: int) -> int:
+        lo, hi = max(0, y - 1), min(h, y + 2)
+        if lo >= hi:
+            return 0
+        return max(_longest_dark_run(arr[cy, :]) for cy in range(lo, hi))
+
+    vs_outer = [x for x in vs if _col_run(x) >= min_v_span]
+    hs_outer = [y for y in hs if _row_run(y) >= min_h_span]
+
+    if len(vs_outer) < 2 or len(hs_outer) < 2:
+        # 外框候选不足 → 当作"无外框"，退到 trim（让 trim 切白边）
         from book_cut.detect.trim import _trim_margins_from_array
 
         return _trim_margins_from_array(arr, padding=padding, config=config, use_morph=use_morph)
 
-    left = vs[0]
-    right = vs[-1]
-    top = hs[0]
-    bottom = hs[-1]
+    left = vs_outer[0]
+    right = vs_outer[-1]
+    top = hs_outer[0]
+    bottom = hs_outer[-1]
 
     # 合理性检查：版框应包含图像主体
     if (right - left) < w * 0.2 or (bottom - top) < h * 0.2:

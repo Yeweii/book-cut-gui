@@ -64,6 +64,47 @@ def _safety_margin_relaxed(h: int, w: int) -> int:
     return max(2, int(min(h, w) * 0.005))
 
 
+def _longest_dark_run(strip: np.ndarray, dark_thr: int = 240) -> int:
+    """v1.9.2 B：strip 上最长连续 dark 像素长度。
+
+    用于区分"真实内容"（长 run，≥ 100px）和"扫描噪点/边缘杂点"（短 run，< 100px）。
+    """
+    if strip.size == 0:
+        return 0
+    is_dark = strip < dark_thr
+    if not is_dark.any():
+        return 0
+    padded = np.concatenate(([False], is_dark, [False]))
+    diff = np.diff(padded.astype(np.int8))
+    starts = np.where(diff == 1)[0]
+    ends = np.where(diff == -1)[0]
+    return int((ends - starts).max())
+
+
+def _longest_dark_run_per_row(arr: np.ndarray, dark_thr: int = 240) -> np.ndarray:
+    """v1.9.2 B：每行最长连续 dark run 长度（shape ``(h,)``）。"""
+    is_dark = arr < dark_thr  # (h, w)
+    h, w = is_dark.shape
+    # Pad 行首尾
+    padded = np.concatenate([np.zeros((h, 1), dtype=bool), is_dark, np.zeros((h, 1), dtype=bool)], axis=1)
+    diff = np.diff(padded.astype(np.int8), axis=1)  # (h, w+1)
+    starts = diff == 1
+    ends = diff == -1
+    # run lengths at end positions
+    out = np.zeros(h, dtype=np.int32)
+    for i in range(h):
+        s = np.where(starts[i])[0]
+        e = np.where(ends[i])[0]
+        if len(s) > 0:
+            out[i] = int((e - s).max())
+    return out
+
+
+def _longest_dark_run_per_col(arr: np.ndarray, dark_thr: int = 240) -> np.ndarray:
+    """v1.9.2 B：每列最长连续 dark run 长度（shape ``(w,)``）。"""
+    return _longest_dark_run_per_row(arr.T, dark_thr=dark_thr)
+
+
 def _safety_check(top: int, bottom: int, left: int, right: int, h: int, w: int, safety: int) -> bool:
     """检测内容是否在 safety 内（True = 贴边，需要 fallback 或放弃）。"""
     return (
@@ -71,6 +112,52 @@ def _safety_check(top: int, bottom: int, left: int, right: int, h: int, w: int, 
         or bottom > h - safety - 1
         or left < safety
         or right > w - safety - 1
+    )
+
+
+def _safety_check_noise_aware(
+    top: int,
+    bottom: int,
+    left: int,
+    right: int,
+    h: int,
+    w: int,
+    safety: int,
+    row_longest: np.ndarray,
+    col_longest: np.ndarray,
+    noise_thr: int = 100,
+) -> bool:
+    """v1.9.2 B：safety 检查的噪点豁免版。
+
+    与 ``_safety_check`` 行为一致，但若贴边的 col/row 是"零散噪点"
+    （longest_run < ``noise_thr``），该边不算命中。
+    古籍扫描边缘噪点 longest run 通常 30-70 px，远小于 border frame (1000+)、
+    文字栏线 (300+) 和稀疏 1px 测试点 (1)，但仍然触发旧 safety。
+
+    Args:
+        row_longest / col_longest: 来自 ``_longest_dark_run_per_row/col``。
+        noise_thr: longest_run 低于此值视为噪点（默认 100）。
+    """
+    NOISE_THR = noise_thr
+
+    def _is_real_edge_collision(
+        pos: int, axis_size: int, longest_at_pos: int, is_low_side: bool
+    ) -> bool:
+        """pos 是否真的"贴边 + 是真实内容"（非噪点）。"""
+        if is_low_side:
+            if pos >= safety:
+                return False  # 不贴边
+        else:
+            if pos <= axis_size - safety - 1:
+                return False  # 不贴边
+        # 贴边 → 看是不是噪点
+        return longest_at_pos >= NOISE_THR
+
+    return (
+        _is_real_edge_collision(top, h, int(row_longest[top]), True)
+        or _is_real_edge_collision(bottom, h, int(row_longest[bottom]), False)
+        or _is_real_edge_collision(left, w, int(col_longest[left]), True)
+        or _is_real_edge_collision(right, w, int(col_longest[right]), False)
     )
 
 
@@ -161,13 +248,23 @@ def _trim_margins_from_array(
     left = int(cols_idx[0])
     right = int(cols_idx[-1])
 
-    # v1.6+ B线 → v1.8.2+：safety margin 二级 fallback。
-    # 1) 严格 safety 命中（内容贴边）→ 放宽到 relaxed safety 重试
-    # 2) relaxed safety 仍命中 → 放弃整页（保守策略：宁可漏裁不伤字）
+    # v1.9.2 B：safety 检查的"噪点豁免"。
+    # 旧逻辑只看 col/row 位置：贴边 → safety 命中 → 不裁。
+    # 现实古籍扫描边缘常有几十像素的零散噪点（最左/最右列 longest run 仅 50-70 px），
+    # 触发 safety 但其实是噪点，应允许裁掉外侧白边。
+    # 修复：如果贴边的 col/row 是"零散噪点"（longest_run < NOISE_THR），
+    # 则该边不算 safety 命中。
+    col_longest = _longest_dark_run_per_col(arr, dark_thr=ink_thr)
+    row_longest = _longest_dark_run_per_row(arr, dark_thr=ink_thr)
+
     safety_strict = _safety_margin(h, w)
-    if _safety_check(top, bottom, left, right, h, w, safety_strict):
+    if _safety_check_noise_aware(
+        top, bottom, left, right, h, w, safety_strict, row_longest, col_longest
+    ):
         safety_relaxed = _safety_margin_relaxed(h, w)
-        if _safety_check(top, bottom, left, right, h, w, safety_relaxed):
+        if _safety_check_noise_aware(
+            top, bottom, left, right, h, w, safety_relaxed, row_longest, col_longest
+        ):
             return _to_L_image(arr)
 
     # 应用 padding（不超出原图）
