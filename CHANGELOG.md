@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## [0.1.10] - 2026-06-23 · v1.8.1
+
+### Added
+- **GUI 停止按钮**：长跑时可随时取消 —— `stop_btn` 紧邻 `run_btn`，按下后置灰防重按；后端线程池 cancel 事件透传
+- **后端 `cancel_event`**：`run_pipeline(args, cancel_event=...)` 新增可选参数；`dry_run.run_dry_run` 也支持；单页计算保持原子性（边界检查，cancel 后不写 PDF）
+
+### Tests
+- `tests/test_stop.py`（4 个用例）：主循环 cancel / 不取消 / dry-run cancel / first_page 前 cancel
+- 测试套件 **233 → 244**（+11 net：4 stop + 7 来自前序会话）
+- 全 suite 过（1.89s stop 子集 / 13.44s 全量），无回归
+- 真实样本 smoke：ZHSY100456 + 1.0s 取消 → 19 页边界停止 + 38 张图 + PDF 不写
+
+### Note
+- v1.8.1 是 v1.8 的小补丁（仅 GUI 增量 + cancel 透传），不改变 CLI / 流水线行为
+
+---
+
 ## [0.1.9] - 2026-06-23 · v1.8
 
 ### Added

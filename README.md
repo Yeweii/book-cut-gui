@@ -14,7 +14,7 @@
   - 单页裁切 `--crop {none,trim,border}`：trim=白边裁切，border=版框内裁（找不到版框自动回退 trim）
   - 二值化 `--binarize {none,otsu,adaptive,sauvola}`，Sauvola 默认（最适合古籍泛黄/不均光照）
 - **输出**：`{book}_{idx:04d}.{ext}`（png/jpg/tif/webp）+ 可选 `--pdf` 合并 PDF（img2pdf 无损）
-- **GUI**：Tkinter 单窗口（macOS 自动用 aqua 主题）+ 后台线程 + 实时日志
+- **GUI**：Tkinter 单窗口（macOS 自动用 aqua 主题）+ 后台线程 + 实时日志 + **停止按钮**（v1.8.1+ 长跑可随时取消）
 - 流水线：`load → deskew → split → crop → binarize → export`
 
 ## 安装
@@ -226,6 +226,10 @@ book-cut-preview-20260623-153022/
 
 GUI：在"二值化"行右侧加 **Dry-run 预览（不写盘）** checkbox + **采样: N 页** spinner；勾选时整张"输出格式"行 disable；执行后 **打开预览目录** 按钮 enable。
 
+### v1.8.1 GUI 停止按钮
+
+"开始处理"按钮旁加 **停止** 按钮（默认 disabled）：运行中可按下优雅取消 —— 取消时**单页计算保持原子性**（在页边界检查），不写半截 PDF，已生成的图保留。
+
 ## 项目结构
 
 ```
@@ -275,6 +279,7 @@ open "dist/Book Cut.app"            # 启动 GUI
 
 ## 路线图
 
+- v1.8.1 (2026-06-23)：GUI 停止按钮 + 后端 `cancel_event` 透传（主循环 + dry-run）
 - v1.8 (2026-06-23)：Dry-run 预览模式 `--dry-run` / `--sample-n` / `--preview-output`；对比拼图 + split confidence + 自动调参建议
 - v1.7 (2026-06-22)：PDF 页面统一尺寸 `--pdf-page-size`（max/first/A4/A5/Letter/Legal/custom）
 - v1.6 (2026-06-22)：split-crop 抗伤字/抗杂质；Hough 缓存联动（A3）；Sauvola 原地写（B3）；pipeline 拆 3 模块（C3）；paper/trim 共享 utils（C2）；GUI UX 改进（E1+E3）
