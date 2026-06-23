@@ -58,7 +58,7 @@ def _synth_sauvola_input(size: int, seed: int = 42) -> np.ndarray:
 def test_b3_byte_identical_to_baseline_1000():
     """B3：1000×1000 输出与 baseline byte-identical。"""
     arr = _synth_sauvola_input(1000)
-    out_new = np.asarray(binarize_sauvola_from_array(arr))
+    out_new = np.asarray(binarize_sauvola_from_array(arr, binary_mode="8bit"))
     out_base = _baseline_sauvola(arr)
     assert np.array_equal(out_new, out_base), (
         f"B3 输出与 baseline 不一致: diff={np.sum(out_new != out_base)} pixels"
@@ -68,7 +68,7 @@ def test_b3_byte_identical_to_baseline_1000():
 def test_b3_byte_identical_to_baseline_2000():
     """B3：2000×2000 输出与 baseline byte-identical。"""
     arr = _synth_sauvola_input(2000)
-    out_new = np.asarray(binarize_sauvola_from_array(arr))
+    out_new = np.asarray(binarize_sauvola_from_array(arr, binary_mode="8bit"))
     out_base = _baseline_sauvola(arr)
     assert np.array_equal(out_new, out_base)
 
@@ -76,7 +76,7 @@ def test_b3_byte_identical_to_baseline_2000():
 def test_b3_byte_identical_to_baseline_4000():
     """B3：4000×4000 输出与 baseline byte-identical。"""
     arr = _synth_sauvola_input(4000)
-    out_new = np.asarray(binarize_sauvola_from_array(arr))
+    out_new = np.asarray(binarize_sauvola_from_array(arr, binary_mode="8bit"))
     out_base = _baseline_sauvola(arr)
     assert np.array_equal(out_new, out_base)
 
@@ -87,7 +87,7 @@ def test_b3_byte_identical_to_baseline_4000():
 def test_b3_output_only_0_and_255():
     """B3：输出仍是二值图（0 或 255）。"""
     arr = _synth_sauvola_input(1000)
-    out = np.asarray(binarize_sauvola_from_array(arr))
+    out = np.asarray(binarize_sauvola_from_array(arr, binary_mode="8bit"))
     unique = set(np.unique(out).tolist())
     assert unique.issubset({0, 255}), f"非二值: {unique}"
 
@@ -95,7 +95,7 @@ def test_b3_output_only_0_and_255():
 def test_b3_dark_pixels_become_zero():
     """B3：黑条（输入值 30）应被判定为文字 → 输出 0。"""
     arr = _synth_sauvola_input(500)
-    out = np.asarray(binarize_sauvola_from_array(arr))
+    out = np.asarray(binarize_sauvola_from_array(arr, binary_mode="8bit"))
     # 原始黑条位置 = 100:120, 300:320, ...
     black_rows = list(range(100, 400, 200))
     for y in black_rows:
@@ -115,7 +115,7 @@ def test_b3_memory_peak_reduced():
     arr = _synth_sauvola_input(4000)
 
     # Warmup
-    binarize_sauvola_from_array(arr)
+    binarize_sauvola_from_array(arr, binary_mode="8bit")
     _baseline_sauvola(arr)
 
     # Baseline peak
@@ -126,7 +126,7 @@ def test_b3_memory_peak_reduced():
 
     # New peak
     tracemalloc.start()
-    binarize_sauvola_from_array(arr)
+    binarize_sauvola_from_array(arr, binary_mode="8bit")
     _, peak_new = tracemalloc.get_traced_memory()
     tracemalloc.stop()
 
@@ -143,8 +143,8 @@ def test_b3_memory_peak_reduced():
 def test_b3_even_window_becomes_odd():
     """B3：偶数 window_size 内部 +1 变奇数（与原版一致）。"""
     arr = _synth_sauvola_input(500)
-    out_even = np.asarray(binarize_sauvola_from_array(arr, window_size=24))
-    out_odd = np.asarray(binarize_sauvola_from_array(arr, window_size=25))
+    out_even = np.asarray(binarize_sauvola_from_array(arr, window_size=24, binary_mode="8bit"))
+    out_odd = np.asarray(binarize_sauvola_from_array(arr, window_size=25, binary_mode="8bit"))
     # window=24 和 window=25 不应完全相同（24 被调整为 25 之后等于 25）
     assert np.array_equal(out_even, out_odd)
 
@@ -152,7 +152,7 @@ def test_b3_even_window_becomes_odd():
 def test_b3_k_zero():
     """B3：k=0 时退化为全局均值阈值，行为合理。"""
     arr = _synth_sauvola_input(500)
-    out = np.asarray(binarize_sauvola_from_array(arr, k=0.0))
+    out = np.asarray(binarize_sauvola_from_array(arr, k=0.0, binary_mode="8bit"))
     assert out.shape == arr.shape
     assert set(np.unique(out).tolist()).issubset({0, 255})
 
@@ -160,7 +160,7 @@ def test_b3_k_zero():
 def test_b3_constant_image_no_crash():
     """B3：全白图（无 std）不应崩（var=0, std=0, threshold=mean*(1-k)）。"""
     arr = np.full((500, 500), 220.0, dtype=np.float32)
-    out = np.asarray(binarize_sauvola_from_array(arr))
+    out = np.asarray(binarize_sauvola_from_array(arr, binary_mode="8bit"))
     # 全白图：所有 arr=mean=220，threshold = 220*(1-k) = 220*0.8 = 176
     # arr(220) < threshold(176) = False → 全 255（白底）
     assert np.all(out == 255)
@@ -170,7 +170,7 @@ def test_b3_small_image():
     """B3：小图也能跑通。"""
     arr = np.full((50, 50), 220.0, dtype=np.float32)
     arr[10:20, 10:40] = 30
-    out = np.asarray(binarize_sauvola_from_array(arr, window_size=5))
+    out = np.asarray(binarize_sauvola_from_array(arr, window_size=5, binary_mode="8bit"))
     assert out.shape == (50, 50)
     # 黑色区域 → 0
     assert np.sum(out == 0) > 0

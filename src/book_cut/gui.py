@@ -358,6 +358,13 @@ def run_gui() -> None:
     ttk.Label(bin_frame, text="（古籍推荐 sauvola）", foreground="gray").grid(
         row=0, column=1, padx=8
     )
+    # v2.0+：1-bit 紧凑输出 checkbox（默认勾选；不勾选走 8-bit 兼容）
+    binary_1bit_var = tk.BooleanVar(value=True)
+    ttk.Checkbutton(
+        bin_frame,
+        text="1-bit 紧凑输出（体积 8x 缩减）",
+        variable=binary_1bit_var,
+    ).grid(row=0, column=2, padx=8)
 
     # v1.8+ dry-run 控件
     dry_frame = ttk.Frame(root)
@@ -705,6 +712,7 @@ def run_gui() -> None:
             "crop_adaptive": "auto" if crop_adaptive_var.get() else "fixed",
             "paper_pages": paper_pages_var.get(),
             "binarize": binarize_var.get(),
+            "binary_mode": "1bit" if binary_1bit_var.get() else "8bit",
             "format": format_var.get(),
             "pdf": pdf_var.get(),
             "deskew": deskew_var.get(),

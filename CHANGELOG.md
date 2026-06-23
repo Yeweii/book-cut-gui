@@ -1,5 +1,42 @@
 # CHANGELOG
 
+## [0.2.0] - 2026-06-24 · v2.0
+
+### Added
+- **`binary_mode` 选项** (`preprocess/binarize.py`)：二值化输出位深选择
+  - `1bit`（默认）：1-bit 调色板（值 0/1），PNG/PDF 体积缩到 8-bit 输出的 ~70%
+  - `8bit`：旧 v1.9 行为，向后兼容
+- **CLI** `--binary-mode {1bit,8bit}`：默认 1bit
+- **环境变量** `BOOKCUT_BINARY_MODE`：覆盖 CLI 默认
+- **GUI** "1-bit 紧凑输出"checkbox：默认勾选
+
+### Changed
+- **`binarize_otsu/adaptive/sauvola` 加 `binary_mode` 参数**（默认 `"1bit"`）
+- **`_to_1bit_image` 新增**：走 `L → 1` + `dither=NONE`（PIL `Image.fromarray(bool_arr, mode="1")` 不支持 bool 数组，会返回全黑）
+- **`binarize` dispatcher 透传 `**kwargs`**：以前只对 `adaptive` 和 `sauvola` 透传；现在统一透传 `binary_mode`
+- **`_compute_page` + `run_dry_run` 加 `binary_mode` 字段**：从 `args` 读默认值
+
+### Performance（实测 6400×8534 尸子图 split=none）
+| 模式 | PDF 体积 | 缩减 |
+|------|----------|------|
+| v1.9.2（8-bit L + Flate） | 651 KB | 1.00x |
+| v2.0（1-bit + Flate） | 459 KB | **1.42x** |
+
+注：理论 1-bit raw 字节是 8-bit 的 1/8（8x），但真实古籍二值化后熵较高
+（边缘飞白、噪点），Flate 压缩后实际缩减 1.4-1.6x。要进一步缩减需 CCITT G4
+（v2.1 候选）。
+
+### Tests
+- `tests/test_binarize.py` +9 个用例：3 算法默认 1-bit、explicit 8-bit 兼容、1-bit/8-bit 像素值等价、PNG 落盘体积缩减、none 模式 passthrough
+- `tests/test_b3_sauvola_inplace.py` 8 个测试 opt-in `binary_mode="8bit"`（保持 B3 算法数值校验不受影响）
+- 测试套件 **283 → 289**（+9 净），全过，ruff 0 错
+
+### Docs
+- `docs/dev/2026-06-24-v2.0-binary-1bit.md`：提案
+- README：binarize 段加 `--binary-mode` 说明
+
+---
+
 ## [0.1.12] - 2026-06-23 · v1.9
 
 ### Added

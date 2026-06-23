@@ -45,7 +45,7 @@ from book_cut.pipeline.outline import (
 )
 from book_cut.preprocess import parse_chain as _parse_preprocess_chain
 from book_cut.preprocess import preprocess as _preprocess_op
-from book_cut.preprocess.binarize import binarize
+from book_cut.preprocess.binarize import BinaryMode, binarize
 
 # v1.8+ dry-run：per-step 计时开关（避免影响 v1.7 行为；正式版可保持 True）
 _TIMING_ENABLED = True
@@ -193,6 +193,7 @@ def _compute_page(
     page_order: str,
     crop_mode: str,
     binarize_method: str,
+    binary_mode: BinaryMode = "1bit",
     crop_config,
     paper_deviation: float,
     split_strategy: str,
@@ -285,7 +286,8 @@ def _compute_page(
     # 4. binarize
     t_bin_start = time.perf_counter() if _TIMING_ENABLED else 0.0
     if binarize_method != "none":
-        sub_pages = [binarize(p, binarize_method) for p in sub_pages]
+        # v2.0+ binary_mode：默认 "1bit" 输出 1-bit 调色板，PNG/PDF 体积 8x 缩减
+        sub_pages = [binarize(p, binarize_method, binary_mode=binary_mode) for p in sub_pages]
     t_bin = time.perf_counter() - t_bin_start if _TIMING_ENABLED else 0.0
 
     # metrics
@@ -375,6 +377,8 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
     # v1.9 新增：图片预处理增强（默认空链 = 不处理，保持 v1.8 行为）
     preprocess_chain: list[str] = _parse_preprocess_chain(getattr(args, "preprocess", "") or "")
     preprocess_quality: str = getattr(args, "preprocess_quality", "balanced")
+    # v2.0 新增：二值化输出模式（默认 1bit，体积 8x 缩减；8bit = v1.9 行为）
+    binary_mode: BinaryMode = getattr(args, "binary_mode", "1bit")
     book_name = input_path.stem if input_path.is_file() else input_path.name
 
     # v1.7：决定 (target_w, target_h) —— None 表示 keep（不统一）。
@@ -515,6 +519,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             page_order=page_order,
             crop_mode=crop_mode,
             binarize_method=binarize_method,
+            binary_mode=binary_mode,
             crop_config=crop_config,
             paper_deviation=paper_deviation,
             split_strategy=args.split,
@@ -534,6 +539,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
         page_order=page_order,
         crop_mode=crop_mode,
         binarize_method=binarize_method,
+        binary_mode=binary_mode,
         crop_config=crop_config,
         paper_deviation=paper_deviation,
         split_strategy=args.split,
@@ -559,6 +565,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             page_order=page_order,
             crop_mode=crop_mode,
             binarize_method=binarize_method,
+            binary_mode=binary_mode,
             crop_config=crop_config,
             paper_deviation=paper_deviation,
             split_strategy=args.split,

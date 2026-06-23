@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 
 from book_cut.io.page_size import (
     PDF_PAGE_SIZE_CHOICES,
@@ -100,6 +101,19 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["none", "otsu", "adaptive", "sauvola"],
         default="none",
         help="二值化算法（默认 none；古籍推荐 sauvola）",
+    )
+    # v2.0+：二值化输出模式（默认 1bit，体积 8x 缩减；8bit = v1.9 行为）
+    _binary_mode_default = os.environ.get("BOOKCUT_BINARY_MODE", "1bit")
+    if _binary_mode_default not in ("1bit", "8bit"):
+        _binary_mode_default = "1bit"
+    parser.add_argument(
+        "--binary-mode",
+        choices=["1bit", "8bit"],
+        default=_binary_mode_default,
+        help="二值化输出位深（v2.0+；默认 1bit）："
+        "1bit=1-bit 调色板（PNG/PDF 体积缩到 1/8，推荐） / "
+        "8bit=8-bit 灰度（v1.9 行为，向后兼容）。"
+        "可被环境变量 BOOKCUT_BINARY_MODE 覆盖。",
     )
     parser.add_argument("--pdf", action="store_true", help="同时输出合并 PDF（img2pdf 无损）")
     parser.add_argument(

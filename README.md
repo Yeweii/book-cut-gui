@@ -62,6 +62,7 @@ python -m book_cut --gui
 | `--split` | `gutter` | `half` / `gutter` / `border` |
 | `--crop` | `none` | `none` / `trim`（白边）/ `border`（版框内裁） |
 | `--binarize` | `none` | `none` / `otsu` / `adaptive` / `sauvola` |
+| `--binary-mode` | `1bit` | v2.0+：二值化输出位深 `1bit`（1-bit 调色板，PNG/PDF 体积 ~30% 缩）/ `8bit`（8-bit L，向后兼容）。可被 `BOOKCUT_BINARY_MODE` 环境变量覆盖 |
 | `--half-offset` | `0` | 对半切的像素偏移（仅 `--split half` 生效） |
 | `--format` | `png` | `png` / `jpg` / `tif` / `webp` |
 | `--pdf` | 关 | 同时输出合并 PDF |
