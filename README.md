@@ -279,6 +279,7 @@ open "dist/Book Cut.app"            # 启动 GUI
 
 ## 路线图
 
+- v1.8.2 (2026-06-23)：trim 安全 margin 二级 fallback + 稀疏墨迹保护（裁剪效果差修复）
 - v1.8.1 (2026-06-23)：GUI 停止按钮 + 后端 `cancel_event` 透传（主循环 + dry-run）
 - v1.8 (2026-06-23)：Dry-run 预览模式 `--dry-run` / `--sample-n` / `--preview-output`；对比拼图 + split confidence + 自动调参建议
 - v1.7 (2026-06-22)：PDF 页面统一尺寸 `--pdf-page-size`（max/first/A4/A5/Letter/Legal/custom）

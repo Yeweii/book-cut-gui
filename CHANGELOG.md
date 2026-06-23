@@ -1,5 +1,22 @@
 # CHANGELOG
 
+## [0.1.11] - 2026-06-23 · v1.8.2
+
+### Fixed
+- **trim 贴边保护二级 fallback** (`detect/trim.py`)：v1.6+ 严格 safety (5-40px) 对版框线贴边的扫描页直接跳过裁切。v1.8.2+ 新增 `relaxed_safety = max(2, h*0.005)` 兜底；严格 hit 时放宽一次，多数古籍扫描的版框线可正常裁切
+- **trim 稀疏墨迹保护** (`detect/trim.py _clean_ink_mask`)：实测发现 5% 密度稀疏墨迹走 `cv2.MORPH_OPEN(3×3)` 会全部清光（3×3 erode 杀孤立点）→ trim 找不到内容边界 → 输出原图。修复：墨迹密度 < 0.5% 跳过 morph
+
+### Tests
+- `tests/test_split_crop_robustness.py` +2 用例：T7b safety 二级 fallback 命中版框线 / T7c 稀疏墨迹保护
+- 测试套件 **244 → 246**，全过
+- 真实样本 smoke：ZHSY100456 + paper_pages=5（默认）+ trim + sauvola → 132 图 / 2.44 MB（与 v1.8.1 等价 —— 用户样本的 paper 偏黄导致 ink_thr 偏高，本改进对白纸 PDF/版框线场景收益明显）
+
+### Note
+- v1.8.2 是 v1.8.1 的 trim 鲁棒性补丁，不改变 CLI / GUI 行为
+- 实测 PNG `optimize=True` 慢 42%（5.5s vs 3.85s）仅省 15% 体积，不采用；`compress_level=8` 慢 30% 省 8%，不采用；保持 PIL 默认（level 6）
+
+---
+
 ## [0.1.10] - 2026-06-23 · v1.8.1
 
 ### Added
