@@ -108,8 +108,8 @@ app = BUNDLE(
     info_plist={
         "CFBundleName": "Book Cut",
         "CFBundleDisplayName": "Book Cut",
-        "CFBundleShortVersionString": "0.1.10",
-        "CFBundleVersion": "0.1.10",
+        "CFBundleShortVersionString": "0.1.11",
+        "CFBundleVersion": "0.1.11",
         "NSHighResolutionCapable": True,
         "LSApplicationCategoryType": "public.app-category.graphics-design",
         "NSHumanReadableCopyright": "MIT",

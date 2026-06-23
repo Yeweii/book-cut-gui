@@ -56,6 +56,7 @@ def save_image(
         # JPG/WebP 不支持 L/LA/RGBA，统一转 RGB
         if image.mode not in {"RGB"}:
             image = image.convert("RGB")
+    # tif/tiff 走默认（无损 + LZ77 已有）
 
     image.save(out_path, **save_kwargs)
     return out_path

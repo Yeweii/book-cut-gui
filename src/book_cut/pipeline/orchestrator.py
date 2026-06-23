@@ -211,9 +211,10 @@ def _compute_page(
     if deskew_enabled:
         from book_cut.preprocess.deskew import deskew_from_array
 
-        arr_for_deskew = np.asarray(image.convert("L"))
-        arr = deskew_from_array(arr_for_deskew)
+        # deskew 输入必须是 L 模式（灰度分析）
+        arr = deskew_from_array(np.asarray(image.convert("L")))
     else:
+        # v1.8.2+：RGB→L 一次转换，下游 split/trim/crop 共享同一 arr
         arr = np.asarray(image.convert("L"))
     t_deskew = time.perf_counter() - t0 if _TIMING_ENABLED else 0.0
 
