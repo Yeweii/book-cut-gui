@@ -141,8 +141,8 @@ def _run_pipeline_thread(
 def run_gui() -> None:
     root = tk.Tk()
     root.title(f"古籍双页切分工具 v{__version__}")
-    root.geometry("720x680")
-    root.minsize(600, 560)
+    root.geometry("980x720")
+    root.minsize(820, 600)
 
     # ---- 状态变量 ----
     input_var = tk.StringVar()
@@ -170,7 +170,10 @@ def run_gui() -> None:
 
     # ---- 布局 ----
     pad = {"padx": 8, "pady": 4}
+    # 列权重：col0=标签固定宽度 / col1=内容扩展 / col2=按钮固定宽度
+    root.columnconfigure(0, weight=0, minsize=70)
     root.columnconfigure(1, weight=1)
+    root.columnconfigure(2, weight=0, minsize=120)
 
     # 标题
     ttk.Label(root, text="古籍双页切分工具", font=("Helvetica", 14, "bold")).grid(
@@ -323,7 +326,7 @@ def run_gui() -> None:
     # 输出格式 + PDF
     ttk.Label(root, text="输出格式:").grid(row=7, column=0, sticky="e", **pad)
     fmt_frame = ttk.Frame(root)
-    fmt_frame.grid(row=7, column=1, sticky="w", **pad)
+    fmt_frame.grid(row=7, column=1, columnspan=2, sticky="ew", **pad)
     ttk.Combobox(
         fmt_frame,
         textvariable=format_var,
@@ -505,11 +508,11 @@ def run_gui() -> None:
             log_queue.put(("log", "⏹ 正在停止..."))
 
     run_btn = ttk.Button(root, text="开始处理", command=on_run)
-    run_btn.grid(row=9, column=0, columnspan=2, pady=8, sticky="ew")
+    run_btn.grid(row=9, column=0, pady=8, sticky="ew", padx=(8, 4))
 
     # v1.8.1+ 停止按钮：初始 disabled；on_run 时启用；on_stop / 完成时禁用
     stop_btn = ttk.Button(root, text="停止", command=on_stop, state="disabled")
-    stop_btn.grid(row=9, column=2, pady=8, sticky="ew")
+    stop_btn.grid(row=9, column=1, pady=8, sticky="ew", padx=4)
 
     # v1.8+ dry-run：执行后启用"打开预览目录"按钮
     def _open_preview_dir() -> None:
@@ -534,7 +537,7 @@ def run_gui() -> None:
     open_preview_btn = ttk.Button(
         root, text="打开预览目录", command=_open_preview_dir, state="disabled"
     )
-    open_preview_btn.grid(row=9, column=2, sticky="e", padx=8)
+    open_preview_btn.grid(row=9, column=2, pady=8, sticky="ew", padx=(4, 8))
 
     # 日志
     ttk.Label(root, text="日志:").grid(row=10, column=0, sticky="nw", padx=8, pady=(8, 0))
