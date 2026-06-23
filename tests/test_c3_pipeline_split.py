@@ -276,3 +276,84 @@ def test_c3_run_pipeline_with_pdf_output(tmp_path):
         f"outline 未透传: {out_toc}"
     )
     out_doc.close()
+
+
+# ============ v1.9.2+ C: --split none ============
+
+
+def test_split_none_skips_split(tmp_path):
+    """v1.9.2+：``--split none`` 不切分，输入当单页直接进 crop。
+
+    用户场景：扫描已经是单页（如手机拍摄），切分会误把内容切成两半。
+    """
+    import argparse
+    from PIL import Image
+
+    from book_cut.io.loader import iter_pages
+    from book_cut.pipeline.orchestrator import _compute_page
+    from book_cut.detect.paper import CropConfig
+
+    # 800x1000 单页图，模拟"已经切分好的单页扫描"
+    img = Image.new("L", (800, 1000), 220)
+    from PIL import ImageDraw
+    d = ImageDraw.Draw(img)
+    # 加点 ink 让 trim 有内容可裁
+    for y in range(100, 900, 30):
+        d.line([(100, y), (700, y)], fill=80, width=2)
+    in_path = tmp_path / "single.png"
+    img.save(in_path)
+
+    # 构造 PageInfo
+    pages = list(iter_pages(in_path))
+    assert len(pages) == 1
+    page = pages[0]
+
+    result = _compute_page(
+        page,
+        deskew_enabled=False,
+        auto_single_page=True,
+        page_order="ltr",
+        crop_mode="trim",
+        binarize_method="none",
+        crop_config=CropConfig(),
+        paper_deviation=30.0,
+        split_strategy="none",
+        half_offset=0,
+        use_morph=True,
+        is_sampled_page=True,
+    )
+
+    # 应只生成 1 张子图（无切分）
+    sub_pages = result["sub_pages"]
+    assert len(sub_pages) == 1, f"--split none 应输出 1 张子图，实际 {len(sub_pages)}"
+
+    # metrics 应反映 method=none, confidence=1.0, x=None, size_right=None
+    sp = result["metrics"]["split"]
+    assert sp["method"] == "none"
+    assert sp["confidence"] == 1.0
+    assert sp["x"] is None
+    assert sp["size_left"] is not None
+    assert sp["size_right"] is None
+
+
+def test_split_none_chooses_in_cli():
+    """v1.9.2+：``--split none`` 在 argparse 中合法。"""
+    from book_cut.cli import build_parser
+
+    parser = build_parser()
+    args = parser.parse_args(["-i", "x.png", "-o", "y", "--split", "none"])
+    assert args.split == "none"
+
+
+def test_split_none_in_gui():
+    """v1.9.2+：GUI split radio buttons 包含 'none'。"""
+    from pathlib import Path
+
+    gui_src = Path(__file__).parent.parent / "src" / "book_cut" / "gui.py"
+    text = gui_src.read_text()
+    # 找 split radio button 的 for 循环（"中缝（推荐）"是 split 选项的标志）
+    anchor = text.find("中缝（推荐）")
+    assert anchor != -1, "找不到 split radio button 锚点"
+    # 取锚点之后 500 字符（包含整段 for 循环 + options 列表）
+    block = text[anchor : anchor + 500]
+    assert '("none", "不切分")' in block, f"GUI split radio buttons 应包含 'none'，实际: {block}"

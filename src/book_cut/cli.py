@@ -24,9 +24,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--split",
-        choices=["half", "gutter", "border"],
+        choices=["none", "half", "gutter", "border"],
         default="gutter",
-        help="切分策略：half=对半（**要求扫描严格居中**；不确定时请用 gutter） / "
+        help="切分策略：none=不切分（输入已是单页，直接走 crop）/"
+        "half=对半（**要求扫描严格居中**；不确定时请用 gutter） / "
         "gutter=中缝（默认）/ border=版框线",
     )
     parser.add_argument(

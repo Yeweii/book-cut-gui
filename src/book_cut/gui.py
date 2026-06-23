@@ -288,7 +288,7 @@ def run_gui() -> None:
     split_frame = ttk.Frame(root)
     split_frame.grid(row=4, column=1, sticky="w", **pad)
     for i, (val, label) in enumerate(
-        [("gutter", "中缝（推荐）"), ("border", "版框线"), ("half", "对半")]
+        [("gutter", "中缝（推荐）"), ("border", "版框线"), ("half", "对半"), ("none", "不切分")]
     ):
         ttk.Radiobutton(split_frame, text=label, variable=split_var, value=val).grid(
             row=0, column=i, padx=4

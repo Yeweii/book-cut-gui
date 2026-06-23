@@ -161,6 +161,9 @@ def _compute_split_confidence(
     w = arr.shape[1] if arr.ndim == 2 else arr.shape[1]
     if strategy == "half":
         return 1.0
+    if strategy == "none":
+        # v1.9.2+：不切分，无检测置信度可言；给 1.0 让调参建议不报警
+        return 1.0
     if strategy == "gutter" and split_x is not None and len(sub_arrs) == 2:
         center = w / 2.0
         offset_ratio = abs(split_x - center) / center  # 0=正中, 1=最边缘
@@ -236,7 +239,10 @@ def _compute_page(
     t_split_start = time.perf_counter() if _TIMING_ENABLED else 0.0
     page_rects: list | None = None
     split_x: int | None = None
-    if split_strategy == "half":
+    if split_strategy == "none":
+        # v1.9.2+：输入已是单页，直接进入 crop 阶段，不切分
+        sub_arrs = [arr]
+    elif split_strategy == "half":
         sub_arrs = split_half_from_array(arr, offset=half_offset)
     elif split_strategy == "border":
         result = split_border_with_rects_from_array(arr)
