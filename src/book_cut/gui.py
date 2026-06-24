@@ -350,48 +350,76 @@ def run_gui() -> None:
                 w.config(state=manual_state)
             except tk.TclError:
                 pass  # Combobox 等特殊控件可能没有 state
+        # v2.2.1+：切到 manual 自动展开，方便用户编辑 padding
+        if crop_var.get() == "manual" and not manual_expanded_var.get():
+            _toggle_manual_expand()
 
     crop_var.trace_add("write", _on_crop_change)
 
     # v2.2+：Manual Crop 面板（拖框 + 4 个 padding + preset 加载/保存）
-    manual_frame = ttk.LabelFrame(root, text="Manual Crop（v2.2+，override auto）")
+    # v2.2.1+：行号独立（不再与二值化撞 row=6），全中文 + 展开/收起按钮
+    manual_frame = ttk.LabelFrame(root, text="手动裁切（v2.2+，替代自动裁切）")
     manual_frame.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
-    # 4 个 padding
+
+    # 展开/收起按钮（v2.2.1+）：默认展开；用户可折叠节省空间
+    # 按钮始终可用（不在 _on_crop_change 的禁用列表中），方便用户在非 manual
+    # 模式下也能展开看 padding 值
+    manual_expanded_var = tk.BooleanVar(value=True)
+
+    def _toggle_manual_expand() -> None:
+        """切换 Manual Crop 内部子 frame 的可见性。"""
+        new_state = not manual_expanded_var.get()
+        manual_expanded_var.set(new_state)
+        if new_state:
+            manual_pad_frame.grid()
+            manual_btn_frame.grid()
+            manual_expand_btn.config(text="▼ 收起")
+        else:
+            manual_pad_frame.grid_remove()
+            manual_btn_frame.grid_remove()
+            manual_expand_btn.config(text="▶ 展开")
+
+    manual_expand_btn = ttk.Button(
+        manual_frame, text="▼ 收起", width=8, command=_toggle_manual_expand
+    )
+    manual_expand_btn.grid(row=0, column=2, sticky="e", padx=(0, 8), pady=(2, 0))
+
+    # 4 个 padding（中缝 = inner / 外侧 = outer）
     manual_pad_frame = ttk.Frame(manual_frame)
-    manual_pad_frame.grid(row=0, column=0, columnspan=3, sticky="w", **pad)
-    ttk.Label(manual_pad_frame, text="Top:").grid(row=0, column=0)
+    manual_pad_frame.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
+    ttk.Label(manual_pad_frame, text="上:").grid(row=0, column=0)
     manual_top_var = tk.IntVar(value=50)
     ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_top_var).grid(
         row=0, column=1, padx=(2, 8)
     )
-    ttk.Label(manual_pad_frame, text="Bottom:").grid(row=0, column=2)
+    ttk.Label(manual_pad_frame, text="下:").grid(row=0, column=2)
     manual_bottom_var = tk.IntVar(value=40)
     ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_bottom_var).grid(
         row=0, column=3, padx=(2, 8)
     )
-    ttk.Label(manual_pad_frame, text="Inner:").grid(row=0, column=4)
+    ttk.Label(manual_pad_frame, text="中缝:").grid(row=0, column=4)
     manual_inner_var = tk.IntVar(value=80)
     ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_inner_var).grid(
         row=0, column=5, padx=(2, 8)
     )
-    ttk.Label(manual_pad_frame, text="Outer:").grid(row=0, column=6)
+    ttk.Label(manual_pad_frame, text="外侧:").grid(row=0, column=6)
     manual_outer_var = tk.IntVar(value=30)
     ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_outer_var).grid(
         row=0, column=7, padx=(2, 8)
     )
 
-    # Mirror + preset 按钮
+    # 镜像 + 预设按钮
     manual_btn_frame = ttk.Frame(manual_frame)
-    manual_btn_frame.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
+    manual_btn_frame.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
     manual_mirror_var = tk.BooleanVar(value=True)
     ttk.Checkbutton(
-        manual_btn_frame, text="Mirror to even pages (inner↔outer)",
+        manual_btn_frame, text="偶页自动镜像（中缝↔外侧）",
         variable=manual_mirror_var,
     ).grid(row=0, column=0, padx=(0, 16))
 
     def _save_manual_preset() -> None:
         path = filedialog.asksaveasfilename(
-            title="保存 manual crop preset",
+            title="保存手动裁切预设",
             defaultextension=".json",
             filetypes=[("JSON", "*.json")],
         )
@@ -405,11 +433,11 @@ def run_gui() -> None:
             mirror_even=manual_mirror_var.get(),
         )
         Path(path).write_text(prof.to_json())
-        messagebox.showinfo("已保存", f"Preset 已保存到\n{path}")
+        messagebox.showinfo("已保存", f"预设已保存到\n{path}")
 
     def _load_manual_preset() -> None:
         path = filedialog.askopenfilename(
-            title="加载 manual crop preset",
+            title="加载手动裁切预设",
             filetypes=[("JSON", "*.json")],
         )
         if not path:
@@ -417,7 +445,7 @@ def run_gui() -> None:
         try:
             prof = ManualCropProfile.from_json(Path(path).read_text())
         except Exception as e:  # noqa: BLE001
-            messagebox.showerror("加载失败", f"Preset 解析失败：\n{e}")
+            messagebox.showerror("加载失败", f"预设解析失败：\n{e}")
             return
         manual_top_var.set(prof.top)
         manual_bottom_var.set(prof.bottom)
@@ -425,25 +453,28 @@ def run_gui() -> None:
         manual_outer_var.set(prof.outer)
         manual_mirror_var.set(prof.mirror_even)
 
-    ttk.Button(manual_btn_frame, text="Load preset…", command=_load_manual_preset).grid(
+    ttk.Button(manual_btn_frame, text="加载预设…", command=_load_manual_preset).grid(
         row=0, column=1, padx=4
     )
-    ttk.Button(manual_btn_frame, text="Save preset…", command=_save_manual_preset).grid(
+    ttk.Button(manual_btn_frame, text="保存预设…", command=_save_manual_preset).grid(
         row=0, column=2, padx=4
     )
 
     # 用 conv 拿 manual 面板的子控件（用于 _on_crop_change 批量禁用）
+    # 注意：manual_expand_btn 不在禁用列表里——用户任何时候都能展开/收起
     manual_widgets: list[tk.Widget] = []
     for child in manual_frame.winfo_children():
+        if child is manual_expand_btn:
+            continue  # 展开/收起按钮始终可用
         manual_widgets.append(child)
         for sub in child.winfo_children():
             manual_widgets.append(sub)
     _on_crop_change()  # 初始化时跑一次对齐默认状态（必须在 manual_widgets 之后）
 
-    # 二值化
-    ttk.Label(root, text="二值化:").grid(row=6, column=0, sticky="e", **pad)
+    # 二值化（v2.2.1+：行号 +1 让出给 manual_frame）
+    ttk.Label(root, text="二值化:").grid(row=7, column=0, sticky="e", **pad)
     bin_frame = ttk.Frame(root)
-    bin_frame.grid(row=6, column=1, sticky="w", **pad)
+    bin_frame.grid(row=7, column=1, sticky="w", **pad)
     ttk.Combobox(
         bin_frame,
         textvariable=binarize_var,
@@ -464,7 +495,7 @@ def run_gui() -> None:
 
     # v1.8+ dry-run 控件
     dry_frame = ttk.Frame(root)
-    dry_frame.grid(row=6, column=2, sticky="w", **pad)
+    dry_frame.grid(row=7, column=2, sticky="w", **pad)
     ttk.Checkbutton(
         dry_frame,
         text="Dry-run 预览（不写盘）",
@@ -481,10 +512,10 @@ def run_gui() -> None:
     sample_n_spin.grid(row=0, column=2, padx=(0, 2))
     ttk.Label(dry_frame, text="页", foreground="gray").grid(row=0, column=3)
 
-    # 输出格式 + PDF
-    ttk.Label(root, text="输出格式:").grid(row=7, column=0, sticky="e", **pad)
+    # 输出格式 + PDF（v2.2.1+：行号 +1）
+    ttk.Label(root, text="输出格式:").grid(row=8, column=0, sticky="e", **pad)
     fmt_frame = ttk.Frame(root)
-    fmt_frame.grid(row=7, column=1, columnspan=2, sticky="ew", **pad)
+    fmt_frame.grid(row=8, column=1, columnspan=2, sticky="ew", **pad)
     ttk.Combobox(
         fmt_frame,
         textvariable=format_var,
@@ -760,9 +791,9 @@ def run_gui() -> None:
 
     dry_run_var.trace_add("write", _on_dry_run_change)
 
-    # 进度条
+    # 进度条（v2.2.1+：行号 +1 让出给 manual_frame）
     progress = ttk.Progressbar(root, mode="indeterminate")
-    progress.grid(row=8, column=0, columnspan=3, sticky="ew", padx=8, pady=(12, 4))
+    progress.grid(row=9, column=0, columnspan=3, sticky="ew", padx=8, pady=(12, 4))
 
     # v1.8.1+ cancel event：每次 on_run 新建一个，透传给 pipeline thread
     cancel_event_holder: list[threading.Event | None] = [None]
@@ -858,11 +889,11 @@ def run_gui() -> None:
             log_queue.put(("log", "⏹ 正在停止..."))
 
     run_btn = ttk.Button(root, text="开始处理", command=on_run)
-    run_btn.grid(row=9, column=0, pady=8, sticky="ew", padx=(8, 4))
+    run_btn.grid(row=10, column=0, pady=8, sticky="ew", padx=(8, 4))
 
     # v1.8.1+ 停止按钮：初始 disabled；on_run 时启用；on_stop / 完成时禁用
     stop_btn = ttk.Button(root, text="停止", command=on_stop, state="disabled")
-    stop_btn.grid(row=9, column=1, pady=8, sticky="ew", padx=4)
+    stop_btn.grid(row=10, column=1, pady=8, sticky="ew", padx=4)
 
     # v1.8+ dry-run：执行后启用"打开预览目录"按钮
     def _open_preview_dir() -> None:
@@ -887,15 +918,15 @@ def run_gui() -> None:
     open_preview_btn = ttk.Button(
         root, text="打开预览目录", command=_open_preview_dir, state="disabled"
     )
-    open_preview_btn.grid(row=9, column=2, pady=8, sticky="ew", padx=(4, 8))
+    open_preview_btn.grid(row=10, column=2, pady=8, sticky="ew", padx=(4, 8))
 
-    # 日志
-    ttk.Label(root, text="日志:").grid(row=10, column=0, sticky="nw", padx=8, pady=(8, 0))
+    # 日志（v2.2.1+：行号 +1）
+    ttk.Label(root, text="日志:").grid(row=11, column=0, sticky="nw", padx=8, pady=(8, 0))
     log_frame = ttk.Frame(root)
-    log_frame.grid(row=11, column=0, columnspan=3, sticky="nsew", padx=8, pady=(0, 8))
+    log_frame.grid(row=12, column=0, columnspan=3, sticky="nsew", padx=8, pady=(0, 8))
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
-    root.rowconfigure(11, weight=1)
+    root.rowconfigure(12, weight=1)
 
     log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled")
     log_text.grid(row=0, column=0, sticky="nsew")
