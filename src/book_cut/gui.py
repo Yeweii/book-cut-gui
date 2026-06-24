@@ -12,10 +12,13 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
+from PIL import Image
+
 from book_cut import __version__
 from book_cut.detect.manual import (
     ManualCropProfile,
 )
+from book_cut.gui_canvas import CropCanvas
 from book_cut.io.page_size import (
     PDF_PAGE_SIZE_CHOICES,
     PDF_PAGE_UNIT_CHOICES,
@@ -189,6 +192,31 @@ def _run_pipeline_thread(
         log_queue.put(("error", _format_error(e)))
     finally:
         sys.stdout, sys.stderr = old_out, old_err
+
+
+# ----------------------------------------------------------------------------
+# v2.2.2+：纯函数 — profile → 4 个 IntVar（拖框 Toplevel 应用按钮用）
+# ----------------------------------------------------------------------------
+
+
+def apply_profile_to_vars(
+    profile: ManualCropProfile,
+    top_var: tk.IntVar,
+    bottom_var: tk.IntVar,
+    inner_var: tk.IntVar,
+    outer_var: tk.IntVar,
+    mirror_var: tk.BooleanVar,
+) -> None:
+    """把 ManualCropProfile 的字段写到 4 个 IntVar + 1 个 BoolVar。
+
+    v2.2.2+ 抽出来的纯函数（无 Tk widget 创建），便于单测：
+    拖框 Toplevel"应用"按钮 → 读 canvas.get_profile() → apply_profile_to_vars。
+    """
+    top_var.set(profile.top)
+    bottom_var.set(profile.bottom)
+    inner_var.set(profile.inner)
+    outer_var.set(profile.outer)
+    mirror_var.set(profile.mirror_even)
 
 
 # ----------------------------------------------------------------------------
@@ -458,6 +486,106 @@ def run_gui() -> None:
     )
     ttk.Button(manual_btn_frame, text="保存预设…", command=_save_manual_preset).grid(
         row=0, column=2, padx=4
+    )
+
+    # v2.2.2+：选择样本页 → 弹 Toplevel 拖框 → 自动算 padding 写回 Spinbox
+    def _open_sample_page() -> None:
+        """选图片 → 弹拖框 Toplevel → 应用后更新 4 个 padding IntVar。"""
+        path = filedialog.askopenfilename(
+            title="选择样本页（用于拖框计算 padding）",
+            filetypes=[
+                ("图片", "*.jpg *.jpeg *.png *.tif *.tiff *.bmp *.webp"),
+                ("PDF", "*.pdf"),
+                ("所有", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        try:
+            img = Image.open(path)
+            if img.mode != "L":
+                img = img.convert("L")
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("加载失败", f"图片加载失败：\n{e}")
+            return
+        _show_sample_crop_window(img)
+
+    def _show_sample_crop_window(img: Image.Image) -> None:
+        """弹 Toplevel 显示图片 + CropCanvas，应用时回写 manual_*_var。"""
+        win = tk.Toplevel(root)
+        win.title("拖框计算 padding（双击重置；点击'应用'写回主窗口）")
+        win.geometry("1000x820")
+
+        # 顶部工具栏：奇/偶页 toggle + 当前样本尺寸
+        toolbar = ttk.Frame(win)
+        toolbar.pack(side="top", fill="x", padx=8, pady=6)
+        is_even_var = tk.BooleanVar(value=False)
+        ttk.Radiobutton(
+            toolbar, text="奇页（inner=左，outer=右）", variable=is_even_var, value=False
+        ).pack(side="left")
+        ttk.Radiobutton(
+            toolbar, text="偶页（inner=右，outer=左）", variable=is_even_var, value=True
+        ).pack(side="left", padx=(8, 16))
+        ttk.Label(
+            toolbar, text=f"样本尺寸: {img.size[0]} × {img.size[1]}", foreground="gray"
+        ).pack(side="left", padx=(16, 0))
+
+        # 初始 profile：从当前 manual_*_var 读（保留用户已设值）
+        initial_profile = ManualCropProfile(
+            top=manual_top_var.get(),
+            bottom=manual_bottom_var.get(),
+            inner=manual_inner_var.get(),
+            outer=manual_outer_var.get(),
+            mirror_even=manual_mirror_var.get(),
+            source_size=img.size,
+        )
+
+        # Canvas
+        canvas = CropCanvas(
+            win,
+            img,
+            profile=initial_profile,
+            is_even=is_even_var.get(),
+            mirror_even=manual_mirror_var.get(),
+        )
+        canvas.pack(side="top", fill="both", expand=True, padx=8, pady=4)
+
+        # 奇/偶页 → canvas.set_is_even
+        def _sync_is_even(*_a: object) -> None:
+            canvas.set_is_even(is_even_var.get())
+
+        is_even_var.trace_add("write", _sync_is_even)
+
+        # 底部按钮
+        btn_frame = ttk.Frame(win)
+        btn_frame.pack(side="bottom", fill="x", padx=8, pady=8)
+
+        def _on_apply() -> None:
+            prof = canvas.get_profile()
+            apply_profile_to_vars(
+                prof,
+                manual_top_var,
+                manual_bottom_var,
+                manual_inner_var,
+                manual_outer_var,
+                manual_mirror_var,
+            )
+            win.destroy()
+
+        ttk.Button(btn_frame, text="重置", command=canvas.reset).pack(side="left", padx=4)
+        ttk.Button(btn_frame, text="取消", command=win.destroy).pack(side="right", padx=4)
+        ttk.Button(btn_frame, text="应用", command=_on_apply).pack(
+            side="right", padx=4
+        )
+
+        # 关窗时也清回调（避免 trace 引用悬空）
+        win.bind(
+            "<Destroy>",
+            lambda _e: (is_even_var.trace_remove("write", _sync_is_even) if is_even_var.trace_info() else None),
+        )
+
+    ttk.Button(manual_btn_frame, text="选择样本页…", command=_open_sample_page).grid(
+        row=0, column=3, padx=(12, 4)
     )
 
     # 用 conv 拿 manual 面板的子控件（用于 _on_crop_change 批量禁用）

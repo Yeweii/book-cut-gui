@@ -16,6 +16,8 @@ from pathlib import Path
 
 GUI_PATH = Path(__file__).resolve().parent.parent / "src" / "book_cut" / "gui.py"
 
+import pytest  # noqa: E402
+
 
 def _read_gui_source() -> str:
     """读 gui.py 源码（避免在 CI 装 Tk）。"""
@@ -125,3 +127,77 @@ def test_manual_expand_collapse_toggle_hides_widgets():
     assert has_toggle, (
         "manual 面板缺少展开/收起切换逻辑（grid_remove / grid）"
     )
+
+
+# ----------------------------------------------------------------------------
+# T4: v2.2.2+ 样本页拖框（图片 → 拖框 → 自动算 padding）
+# ----------------------------------------------------------------------------
+
+
+def test_sample_page_button_exists():
+    """manual 面板应有"选择样本页…"按钮（v2.2.2+）。"""
+    src = _read_gui_source()
+    assert "选择样本页" in src, "manual 面板缺少'选择样本页…'按钮"
+
+
+def test_gui_imports_cropcanvas():
+    """gui.py 应 import CropCanvas（v2.2.2+ 拖框 UI 入口）。"""
+    src = _read_gui_source()
+    assert "from book_cut.gui_canvas import" in src, "gui.py 未 import CropCanvas"
+    assert "CropCanvas" in src, "gui.py 未引用 CropCanvas"
+
+
+def test_sample_page_supports_image_filetypes():
+    """样本页文件选择器（_open_sample_page 上下文）应支持常见图片格式。
+
+    静态分析：抓 _open_sample_page 函数体里的 filetypes=[...，断言至少 1 个图片扩展。
+    """
+    src = _read_gui_source()
+    # 抓 _open_sample_page 函数到下一个 def / 顶层语句为止
+    import re
+
+    m = re.search(r"def _open_sample_page.*?(?=\n    def |\nclass |\Z)", src, flags=re.DOTALL)
+    assert m is not None, "找不到 _open_sample_page 函数定义"
+    body = m.group(0)
+    has_image_ft = any(ext in body for ext in ["*.png", "*.jpg", "*.jpeg", "*.tif", "*.bmp"])
+    assert has_image_ft, "样本页文件选择器应支持图片格式（png/jpg/tif/bmp 等）"
+
+
+# ----------------------------------------------------------------------------
+# T5: 纯函数：profile → 4 个 IntVar 字段
+# ----------------------------------------------------------------------------
+
+
+def test_apply_profile_to_vars():
+    """apply_profile_to_vars(profile, vars) 把 profile 的 4 个 padding 写到 IntVar。
+
+    v2.2.2+ 抽出来的纯函数：拖框 Toplevel 应用按钮调它把新 padding 同步到主窗口。
+    单元测试不依赖 Tk：tk.IntVar 在 mock 模式下也能 set/get。
+    """
+    import tkinter as tk
+
+    from book_cut.detect.manual import ManualCropProfile
+
+    try:
+        root = tk.Tk()
+    except tk.TclError:
+        pytest.skip("无 Tk 显示环境")
+
+    from book_cut.gui import apply_profile_to_vars
+
+    top = tk.IntVar(value=0)
+    bottom = tk.IntVar(value=0)
+    inner = tk.IntVar(value=0)
+    outer = tk.IntVar(value=0)
+    mirror = tk.BooleanVar(value=True)
+
+    prof = ManualCropProfile(top=50, bottom=40, inner=80, outer=30, mirror_even=False)
+    apply_profile_to_vars(prof, top, bottom, inner, outer, mirror)
+
+    assert top.get() == 50
+    assert bottom.get() == 40
+    assert inner.get() == 80
+    assert outer.get() == 30
+    assert mirror.get() is False  # mirror_even 也会同步
+
+    root.destroy()
