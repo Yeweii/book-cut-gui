@@ -92,3 +92,28 @@
 - [x] `--no-single-page` CLI 开关
 - [x] 36 测试全过（原 33 + 单页 3）
 - [x] `docs/sessions/2026-06-21-book-cut-v1.1.md` 校准记录
+
+## v1.3 · 自适应裁切 ✅（在 v1.3-adaptive-crop 分支）
+
+- [x] `detect/paper.py`：`CropConfig` + `estimate_paper_color`（95th p95，clip [180,255]）+ `aggregate_paper_color`（median）+ `adaptive_padding`（max(min*0.02, 5)，clamp 30）
+- [x] `trim_margins` 加 `config=` kwarg；`config is None` 走 v1.1 legacy 路径（零行为回退）
+- [x] `crop_to_border` 加 `config=` kwarg；3 处 trim fallback 全部传透 config
+- [x] `pipeline._build_crop_config` 采样前 N 页估书级 paper color
+- [x] CLI：`--crop-adaptive {auto,fixed}`（default auto）+ `--paper-pages N`（default 5）
+- [x] GUI：自适应 checkbox（默认 on）+ 采样页 spinner（off 时 disabled）
+- [x] 12 个新 test：paper color 估计器、aggregation、adaptive padding、adaptive vs fixed 回归钉子、yellowed paper 价值证明、border fallback 透传
+- [x] 48 测试全过、ruff 0 错
+- [x] ZHSY 验证：book paper color=218，132 图，对比 v1.1 文本页 -13%~-17% 紧致（正确：泛黄纸不再被当内容）
+- [x] 茶山集 68 页回归：136 图 + PDF，行为一致
+- [x] `docs/sessions/2026-06-21-book-cut-v1.3.md` v1.3 记录
+
+## v1.3 · macOS GUI 打包 + 打包说明文档化 ✅
+
+- [x] `packaging/Book Cut.spec` hiddenimports 加 `book_cut.detect.paper` + Info.plist 版本 0.1.2 → 0.1.3
+- [x] `bash packaging/build_macos.sh` 跑通：`dist/Book Cut.app` 222MB arm64
+- [x] 启动 smoke test：进程存活 5+ 秒无崩溃
+- [x] PYZ 归档核查：`book_cut.detect.paper` 进了 bundle
+- [x] 清理 samples/out_* 5 个临时输出目录
+- [x] `docs/packaging.md` 新建：TL;DR / 前置 / 一键+手动 / 产物结构 / 发布版本 / 验证 5 步 / 常见问题 / Universal
+- [x] `README.md` 打包段链接更新到 `docs/packaging.md`
+- [x] `docs/sessions/2026-06-21-book-cut-v1.3-packaging.md` 打包记录

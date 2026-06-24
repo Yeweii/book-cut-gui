@@ -1,10 +1,20 @@
-"""版框内裁：检测单页的外框线（版框），裁切到版框内部。"""
+"""版框内裁：检测单页的外框线（版框），裁切到版框内部。
+
+Canny/Hough 参数保持静态（几何检测，不受 paper color 影响）。
+当版框检测失败时回退到 ``trim_margins``，trim 现在会接收 adaptive config
+（来自 ``book_cut.detect.paper``）。
+"""
 
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import cv2
 import numpy as np
 from PIL import Image
+
+if TYPE_CHECKING:
+    from book_cut.detect.paper import CropConfig
 
 
 def _to_gray(image: Image.Image) -> np.ndarray:
@@ -60,14 +70,17 @@ def _detect_lines(gray: np.ndarray) -> tuple[list[int], list[int]] | None:
 def crop_to_border(
     image: Image.Image,
     padding: int = 5,
+    config: CropConfig | None = None,
 ) -> Image.Image:
     """检测版框并裁切到版框内部。
 
-    找不到版框时回退到 ``trim_margins``。
+    找不到版框时回退到 ``trim_margins``，并把 ``config`` 传过去（v1.3+）。
 
     Args:
         image: 单页图像（已经切分后）。
         padding: 距版框的内边距（像素）。
+        config: 自适应裁切配置。``None`` = legacy 模式（传给 trim 时也是 legacy）。
+            传给 trim 时 ``padding`` 仍可独立指定。
     """
     gray = _to_gray(image)
     h, w = gray.shape
@@ -76,13 +89,13 @@ def crop_to_border(
     if result is None:
         from book_cut.detect.trim import trim_margins
 
-        return trim_margins(image)
+        return trim_margins(image, padding=padding, config=config)
 
     vs, hs = result
     if len(vs) < 2 or len(hs) < 2:
         from book_cut.detect.trim import trim_margins
 
-        return trim_margins(image)
+        return trim_margins(image, padding=padding, config=config)
 
     left = vs[0]
     right = vs[-1]
@@ -93,7 +106,7 @@ def crop_to_border(
     if (right - left) < w * 0.2 or (bottom - top) < h * 0.2:
         from book_cut.detect.trim import trim_margins
 
-        return trim_margins(image)
+        return trim_margins(image, padding=padding, config=config)
 
     # 裁到版框内部（含 padding）
     cl = max(0, left + padding)

@@ -28,16 +28,55 @@ def _split(image, strategy: str, auto_single_page: bool = True) -> list:
     return splitter(image)
 
 
-def _crop_pages(pages: list, mode: str) -> list:
-    """对切分后的每页分别裁切。"""
+def _crop_pages(pages: list, mode: str, config=None) -> list:
+    """对切分后的每页分别裁切。
+
+    Args:
+        pages: 已切分的 PIL Image 列表。
+        mode: ``"trim"`` / ``"border"``。
+        config: ``CropConfig`` 或 ``None``（legacy 模式）。
+    """
     from book_cut.detect.border import crop_to_border
     from book_cut.detect.trim import trim_margins
 
     if mode == "trim":
-        return [trim_margins(p) for p in pages]
+        return [trim_margins(p, config=config) for p in pages]
     if mode == "border":
-        return [crop_to_border(p) for p in pages]
+        return [crop_to_border(p, config=config) for p in pages]
     raise ValueError(f"未知裁切模式: {mode}")
+
+
+def _build_crop_config(args, sample_pages: list) -> object | None:
+    """根据 CLI args 构造 ``CropConfig``（或返 ``None`` 走 legacy 路径）。
+
+    行为表：
+    - ``--crop-adaptive fixed`` → 返 ``None``（legacy 阈值 240）
+    - ``--crop-adaptive auto`` 且 ``--paper-pages >= 1`` → 用前 N 页估 book paper color
+    - ``--crop-adaptive auto`` 且 ``--paper-pages 0/1`` → 每页单独估（每次都算）
+    """
+    from book_cut.detect.paper import (
+        aggregate_paper_color,
+        default_crop_config,
+        estimate_paper_color,
+    )
+
+    crop_adaptive: str = getattr(args, "crop_adaptive", "auto")
+    if crop_adaptive == "fixed":
+        return None  # legacy 模式：trim/border 走硬编码 threshold=240
+
+    paper_pages: int = max(0, getattr(args, "paper_pages", 5))
+    if not sample_pages or paper_pages == 0:
+        # 无样页可用：返一个默认 config，每页用 240 (等同 legacy)
+        return default_crop_config(paper_color=240.0)
+
+    sampled = sample_pages[:paper_pages]
+    colors = [estimate_paper_color(p.image) for p in sampled]
+    book_paper = aggregate_paper_color(colors)
+    print(
+        f"[INFO] 自适应裁切: book paper color = {book_paper:.1f} "
+        f"(sampled {len(colors)} pages, raw = {[round(c, 1) for c in colors]})"
+    )
+    return default_crop_config(paper_color=book_paper)
 
 
 def run_pipeline(args: argparse.Namespace) -> None:
@@ -56,6 +95,10 @@ def run_pipeline(args: argparse.Namespace) -> None:
     deskew_enabled: bool = getattr(args, "deskew", False)
     auto_single_page: bool = getattr(args, "auto_single_page", True)
     book_name = Path(args.input).stem if Path(args.input).is_file() else Path(args.input).name
+
+    # 自适应裁切：先估 book paper color，再注入到 crop step
+    paper_pages_n: int = max(1, getattr(args, "paper_pages", 5))
+    crop_config = _build_crop_config(args, pages[:paper_pages_n])
 
     image_paths: list[Path] = []
     counter = 0
@@ -77,7 +120,7 @@ def run_pipeline(args: argparse.Namespace) -> None:
 
         # 3. 可选：裁切（白边 / 版框内裁）
         if crop_mode != "none":
-            sub_pages = _crop_pages(sub_pages, crop_mode)
+            sub_pages = _crop_pages(sub_pages, crop_mode, config=crop_config)
 
         # 4. 可选：二值化
         if binarize_method != "none":
