@@ -514,7 +514,7 @@ def run_gui() -> None:
         """弹 Toplevel 显示图片 + CropCanvas，应用时回写 manual_*_var。"""
         win = tk.Toplevel(root)
         win.title("拖框计算 padding（双击重置；点击'应用'写回主窗口）")
-        win.geometry("1000x820")
+        win.geometry("1000x860")  # v2.2.4+ 调高 40px 让底部"应用"按钮更稳
 
         # 顶部工具栏：奇/偶页 toggle + 当前样本尺寸
         toolbar = ttk.Frame(win)
@@ -549,9 +549,8 @@ def run_gui() -> None:
         ttk.Button(toolbar, text="缩小", width=6, command=lambda: _on_zoom_out()).pack(
             side="left", padx=2
         )
-        ttk.Button(toolbar, text="100%", width=6, command=lambda: _on_zoom_reset()).pack(
-            side="left", padx=2
-        )
+        # v2.2.4+ 移除"100%" 按钮（与右边百分比 label 重复，看起来像空白按钮）；
+        # 实际大小（1.0）用"适应窗口"覆盖——想看原图大小就拉到 100% 也方便。
         ttk.Label(toolbar, textvariable=zoom_pct_var, foreground="gray", width=6).pack(
             side="left", padx=(4, 0)
         )
@@ -602,10 +601,6 @@ def run_gui() -> None:
             canvas.zoom_out()
             _update_zoom_label()
 
-        def _on_zoom_reset() -> None:
-            canvas.zoom_reset()
-            _update_zoom_label()
-
         # 窗口首次布局完后自动 fit（避免大图底部被切）
         win.update_idletasks()
         win.after(50, _on_fit)
@@ -616,7 +611,10 @@ def run_gui() -> None:
 
         is_even_var.trace_add("write", _sync_is_even)
 
-        # 底部按钮
+        # 底部按钮（v2.2.4+ 加 Separator 让"应用"更醒目）
+        ttk.Separator(win, orient="horizontal").pack(
+            side="bottom", fill="x", padx=8, pady=(4, 0)
+        )
         btn_frame = ttk.Frame(win)
         btn_frame.pack(side="bottom", fill="x", padx=8, pady=8)
 

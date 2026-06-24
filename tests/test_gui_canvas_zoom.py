@@ -225,3 +225,49 @@ def test_sample_window_has_zoom_buttons():
     body = m.group(0)
     for label in ("适应窗口", "放大", "缩小"):
         assert label in body, f"工具栏缺少按钮：{label}"
+
+
+# ----------------------------------------------------------------------------
+# T6: v2.2.4+ 移除冗余 100% 按钮（避免和百分比 label 重复）
+# ----------------------------------------------------------------------------
+
+
+def test_no_redundant_100_percent_button():
+    """不应有 text="100%" 的按钮（与百分比 label 重复，看起来像空白按钮）。
+
+    v2.2.3 引入了 100% 按钮和 zoom_pct_var label 都显示"100%"，用户反馈
+    100% 按钮看起来是空白按钮。本测试确保不再有这种重复。
+    """
+    src = _read(GUI_PATH)
+    m = re.search(
+        r"def _show_sample_crop_window.*?ttk\.Button\(manual_btn_frame",
+        src,
+        flags=re.DOTALL,
+    )
+    body = m.group(0)
+    assert 'text="100%"' not in body, (
+        "存在 text='100%' 按钮——会和百分比 label 重复（v2.2.3 UX bug）"
+    )
+
+
+# ----------------------------------------------------------------------------
+# T7: v2.2.4+ 底部 "应用" 按钮必须存在
+# ----------------------------------------------------------------------------
+
+
+def test_apply_button_in_sample_window():
+    """_show_sample_crop_window 必须有"应用"按钮（v2.2.4+ 必填项）。
+
+    v2.2.3 反馈：用户没看到底部"应用"按钮，怀疑被工具栏挤掉或裁切。
+    本测试静态分析源码中必须存在 "应用" 按钮。
+    """
+    src = _read(GUI_PATH)
+    m = re.search(
+        r"def _show_sample_crop_window.*?ttk\.Button\(manual_btn_frame",
+        src,
+        flags=re.DOTALL,
+    )
+    body = m.group(0)
+    # "应用" 按钮：在 btn_frame 里，command 调 _on_apply
+    assert 'text="应用"' in body, "底部缺少'应用'按钮"
+    assert "_on_apply" in body, "应用按钮缺少 _on_apply 回调"
