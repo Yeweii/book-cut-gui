@@ -336,6 +336,9 @@ def test_apply_row_is_independent_of_toolbar():
     v2.2.7 修复：apply_row 独立 Frame，紧贴 toolbar 下方，固定高
     （Separator + 按钮行约 50px），不受 toolbar 控件数量影响。
 
+    v2.2.7.1 调整：apply_bar 改 pack(side="bottom")，让按钮在 Toplevel
+    底部（自然位置）恒可见，与 canvas 互相独立。
+
     本测试用 pack_info 验证 apply_row 不在 toolbar 内。
     """
     src = _read(GUI_PATH)
@@ -365,6 +368,43 @@ def test_apply_row_is_independent_of_toolbar():
     )
     assert "expand=" not in pack_args or "expand=0" in pack_args or "expand=False" in pack_args, (
         f"apply_row 不应 expand（保证固定高，不被 canvas 抢空间）；当前: {pack_args!r}"
+    )
+
+
+# ----------------------------------------------------------------------------
+# T7d: v2.2.7.1+ apply_bar 必须在 Toplevel 底部（side="bottom"），常驻可见
+# ----------------------------------------------------------------------------
+
+
+def test_apply_bar_packed_at_bottom_v2271():
+    """v2.2.7.1+ apply_bar 必须 pack(side="bottom")，让按钮在 Toplevel 底部恒可见。
+
+    v2.2.7 把 apply_bar 放在 toolbar 下方（side="top"），结果按钮在
+    toolbar 和 canvas 中间，位置不自然；用户反馈"需要图片缩小到一定程度
+    才可以显示底部三个按钮"——视觉上像在 canvas 内部被遮。
+
+    修复：apply_bar 改 pack(side="bottom", fill="x")，固定在 Toplevel
+    最底部，不与 canvas 互相影响，任何缩放下都可见。
+    """
+    src = _read(GUI_PATH)
+    m = re.search(
+        r"def _show_sample_crop_window.*?ttk\.Button\(manual_btn_frame",
+        src,
+        flags=re.DOTALL,
+    )
+    body = m.group(0)
+
+    # 抓 apply_bar 的 pack 调用
+    bar_pack = re.search(
+        r"apply_bar\.pack\(\s*([^)]+)\s*\)", body
+    )
+    assert bar_pack is not None, "apply_bar 缺少 .pack() 调用"
+    pack_args = bar_pack.group(1)
+    assert 'side="bottom"' in pack_args, (
+        f"v2.2.7.1+：apply_bar 必须 pack(side='bottom') 在 Toplevel 底部；当前: {pack_args!r}"
+    )
+    assert 'fill="x"' in pack_args, (
+        f"apply_bar 必须 fill='x'（横满）；当前: {pack_args!r}"
     )
 
 

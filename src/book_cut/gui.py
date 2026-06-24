@@ -671,10 +671,13 @@ def run_gui() -> None:
 
         is_even_var.trace_add("write", _sync_is_even)
 
-        # 应用栏（v2.2.7+）：紧贴 toolbar 下方，独立一行。
-        # 固定高度 ~50px（Separator + button row），不会被 canvas expand 挤掉。
+        # 应用栏（v2.2.7.1+）：Toplevel 最底部独立一行（side="bottom"）。
+        # v2.2.7 放 toolbar 下方导致按钮在中间（不自然），用户反馈
+        # "需要图片缩小到一定程度才可以显示底部三个按钮"。
+        # 改 side="bottom" 后：toolbar 在顶 / canvas 在中（expand）/
+        # apply_bar 在底，互相独立，任何缩放都恒可见。
         apply_bar = ttk.Frame(win)
-        apply_bar.pack(side="top", fill="x", padx=8, pady=(0, 4))
+        apply_bar.pack(side="bottom", fill="x", padx=8, pady=(4, 8))
         ttk.Separator(apply_bar, orient="horizontal").pack(side="top", fill="x")
 
         def _on_apply() -> None:
