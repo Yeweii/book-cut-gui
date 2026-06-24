@@ -352,7 +352,6 @@ def run_gui() -> None:
                 pass  # Combobox 等特殊控件可能没有 state
 
     crop_var.trace_add("write", _on_crop_change)
-    _on_crop_change()  # 初始化时跑一次对齐默认状态
 
     # v2.2+：Manual Crop 面板（拖框 + 4 个 padding + preset 加载/保存）
     manual_frame = ttk.LabelFrame(root, text="Manual Crop（v2.2+，override auto）")
@@ -439,6 +438,7 @@ def run_gui() -> None:
         manual_widgets.append(child)
         for sub in child.winfo_children():
             manual_widgets.append(sub)
+    _on_crop_change()  # 初始化时跑一次对齐默认状态（必须在 manual_widgets 之后）
 
     # 二值化
     ttk.Label(root, text="二值化:").grid(row=6, column=0, sticky="e", **pad)
