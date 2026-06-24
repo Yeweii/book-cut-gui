@@ -271,3 +271,30 @@ def test_apply_button_in_sample_window():
     # "应用" 按钮：在 btn_frame 里，command 调 _on_apply
     assert 'text="应用"' in body, "底部缺少'应用'按钮"
     assert "_on_apply" in body, "应用按钮缺少 _on_apply 回调"
+
+
+# ----------------------------------------------------------------------------
+# T8: v2.2.5+ 输入路径浏览 — 统一"文件 / 文件夹"对话框
+# ----------------------------------------------------------------------------
+
+
+def test_browse_input_uses_unified_dialog():
+    """v2.2.5+ browse_input 必须用统一 Toplevel（不要 askdirectory→askopenfilename 2 步）。
+
+    原行为：先弹 askdirectory（选择文件夹），取消后才弹 askopenfilename（选文件）。
+    用户体验割裂。新行为：单 Toplevel 同时支持两种选择。
+    """
+    src = _read(GUI_PATH)
+    # 找 browse_input 函数体（用下一个 def/class 边界）
+    m = re.search(
+        r"def browse_input.*?(?=\n    def |\nclass |\Z)", src, flags=re.DOTALL
+    )
+    assert m is not None, "找不到 browse_input 函数"
+    body = m.group(0)
+    # 新版必须用 Toplevel
+    assert "Toplevel" in body, (
+        "browse_input 没用 Toplevel（v2.2.5 之前的 2 步 askdialog 已被替代）"
+    )
+    # 必须有"选择文件"和"选择文件夹"两个按钮
+    assert "选择文件" in body, "browse_input 缺少'选择文件'按钮"
+    assert "选择文件夹" in body, "browse_input 缺少'选择文件夹'按钮"

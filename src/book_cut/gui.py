@@ -271,9 +271,32 @@ def run_gui() -> None:
     ttk.Entry(root, textvariable=input_var).grid(row=1, column=1, sticky="ew", **pad)
 
     def browse_input() -> None:
-        path = filedialog.askdirectory(title="选择文件夹")
-        if not path:
-            path = filedialog.askopenfilename(
+        """统一选择 PDF / 图片文件 或 包含它们的文件夹（v2.2.5+）。
+
+        原行为：先 askdirectory（选文件夹），取消后才 askopenfilename（选文件），
+        2 步割裂。新行为：单 Toplevel 同时支持两种选择；用户也可直接输入路径。
+        """
+        win = tk.Toplevel(root)
+        win.title("选择输入路径")
+        win.geometry("520x180")
+        win.transient(root)
+        win.resizable(False, False)
+
+        path_var = tk.StringVar(value=input_var.get())
+
+        ttk.Label(
+            win, text="选择 PDF / 图片文件，或包含它们的文件夹："
+        ).pack(anchor="w", padx=12, pady=(12, 4))
+
+        entry_frame = ttk.Frame(win)
+        entry_frame.pack(fill="x", padx=12, pady=4)
+        ttk.Entry(entry_frame, textvariable=path_var).pack(
+            side="left", fill="x", expand=True
+        )
+
+        def _pick_file() -> None:
+            p = filedialog.askopenfilename(
+                parent=win,
                 title="选择 PDF 或图片",
                 filetypes=[
                     ("PDF", "*.pdf"),
@@ -281,8 +304,40 @@ def run_gui() -> None:
                     ("所有", "*.*"),
                 ],
             )
-        if path:
-            input_var.set(path)
+            if p:
+                path_var.set(p)
+
+        def _pick_dir() -> None:
+            p = filedialog.askdirectory(parent=win, title="选择文件夹")
+            if p:
+                path_var.set(p)
+
+        def _confirm() -> None:
+            p = path_var.get().strip()
+            if p:
+                input_var.set(p)
+            win.destroy()
+
+        btn_row = ttk.Frame(win)
+        btn_row.pack(fill="x", padx=12, pady=(8, 4))
+        ttk.Button(btn_row, text="选择文件…", command=_pick_file).pack(
+            side="left", padx=2
+        )
+        ttk.Button(btn_row, text="选择文件夹…", command=_pick_dir).pack(
+            side="left", padx=2
+        )
+
+        bottom_row = ttk.Frame(win)
+        bottom_row.pack(fill="x", padx=12, pady=(4, 12))
+        ttk.Button(bottom_row, text="取消", command=win.destroy).pack(
+            side="right", padx=2
+        )
+        ttk.Button(bottom_row, text="确定", command=_confirm).pack(
+            side="right", padx=2
+        )
+
+        win.bind("<Return>", lambda _e: _confirm())
+        win.bind("<Escape>", lambda _e: win.destroy())
 
     ttk.Button(root, text="浏览…", command=browse_input).grid(row=1, column=2, **pad)
 
