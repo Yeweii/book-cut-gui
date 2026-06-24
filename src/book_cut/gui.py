@@ -530,6 +530,32 @@ def run_gui() -> None:
             toolbar, text=f"样本尺寸: {img.size[0]} × {img.size[1]}", foreground="gray"
         ).pack(side="left", padx=(16, 0))
 
+        # 缩放按钮（v2.2.3+）：方便查看大图全貌 / 局部放大精确拖框
+        zoom_label = ttk.Label(toolbar, text="缩放: ", foreground="gray")
+        zoom_label.pack(side="left", padx=(24, 0))
+
+        # 缩放比例显示（更新由 _update_zoom_label 维护）
+        zoom_pct_var = tk.StringVar(value="100%")
+
+        def _update_zoom_label() -> None:
+            zoom_pct_var.set(f"{int(canvas.get_scale() * 100)}%")
+
+        ttk.Button(toolbar, text="适应窗口", width=8, command=lambda: _on_fit()).pack(
+            side="left", padx=(8, 2)
+        )
+        ttk.Button(toolbar, text="放大", width=6, command=lambda: _on_zoom_in()).pack(
+            side="left", padx=2
+        )
+        ttk.Button(toolbar, text="缩小", width=6, command=lambda: _on_zoom_out()).pack(
+            side="left", padx=2
+        )
+        ttk.Button(toolbar, text="100%", width=6, command=lambda: _on_zoom_reset()).pack(
+            side="left", padx=2
+        )
+        ttk.Label(toolbar, textvariable=zoom_pct_var, foreground="gray", width=6).pack(
+            side="left", padx=(4, 0)
+        )
+
         # 初始 profile：从当前 manual_*_var 读（保留用户已设值）
         initial_profile = ManualCropProfile(
             top=manual_top_var.get(),
@@ -540,15 +566,49 @@ def run_gui() -> None:
             source_size=img.size,
         )
 
-        # Canvas
+        # Canvas 容器（含 Scrollbar）
+        canvas_frame = ttk.Frame(win)
+        canvas_frame.pack(side="top", fill="both", expand=True, padx=8, pady=4)
+        y_scroll = ttk.Scrollbar(canvas_frame, orient="vertical")
+        y_scroll.pack(side="right", fill="y")
+        x_scroll = ttk.Scrollbar(canvas_frame, orient="horizontal")
+        x_scroll.pack(side="bottom", fill="x")
         canvas = CropCanvas(
-            win,
+            canvas_frame,
             img,
             profile=initial_profile,
             is_even=is_even_var.get(),
             mirror_even=manual_mirror_var.get(),
         )
-        canvas.pack(side="top", fill="both", expand=True, padx=8, pady=4)
+        canvas.pack(side="left", fill="both", expand=True)
+        canvas.config(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
+        y_scroll.config(command=canvas.yview)
+        x_scroll.config(command=canvas.xview)
+
+        # 缩放回调
+        def _on_fit() -> None:
+            # 用 canvas_frame 的当前 size 算 best fit（去掉 scrollbar 占的约 20px）
+            win.update_idletasks()
+            fw = max(100, canvas_frame.winfo_width() - 24)
+            fh = max(100, canvas_frame.winfo_height() - 24)
+            canvas.fit_to_size(max_w=fw, max_h=fh)
+            _update_zoom_label()
+
+        def _on_zoom_in() -> None:
+            canvas.zoom_in()
+            _update_zoom_label()
+
+        def _on_zoom_out() -> None:
+            canvas.zoom_out()
+            _update_zoom_label()
+
+        def _on_zoom_reset() -> None:
+            canvas.zoom_reset()
+            _update_zoom_label()
+
+        # 窗口首次布局完后自动 fit（避免大图底部被切）
+        win.update_idletasks()
+        win.after(50, _on_fit)
 
         # 奇/偶页 → canvas.set_is_even
         def _sync_is_even(*_a: object) -> None:

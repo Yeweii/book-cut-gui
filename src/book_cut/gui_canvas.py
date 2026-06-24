@@ -166,6 +166,59 @@ class CropCanvas(tk.Canvas):  # type: ignore[misc, valid-type]
         self.set_profile(prof)
 
     # ------------------------------------------------------------------
+    # 缩放（v2.2.3+）：放大/缩小/适应窗口
+    # ------------------------------------------------------------------
+
+    def set_scale(self, scale: float) -> None:
+        """设置显示 scale（v2.2.3+）。
+
+        重算 ``_disp_w`` / ``_disp_h``，重新 config Canvas 尺寸 + 重绘图 + 重设 scrollregion。
+        拖框 rect 在原图坐标系下保持不变，所以视觉效果是"放大/缩小查看"，
+        padding 数学不变。
+        """
+        if scale <= 0:
+            raise ValueError(f"scale must be > 0, got {scale}")
+        self._scale = scale
+        self._disp_w = max(1, int(self._raw_w * scale))
+        self._disp_h = max(1, int(self._raw_h * scale))
+        self.config(width=self._disp_w, height=self._disp_h)
+        # 删旧图
+        if self._image_item is not None:
+            self.delete(self._image_item)
+            self._image_item = None
+        self._draw_image()
+        self._render_rect()
+        # 同步 scrollregion（让 Scrollbar 知道可滚动范围）
+        self.config(scrollregion=(0, 0, self._disp_w, self._disp_h))
+
+    def fit_to_size(self, max_w: int, max_h: int) -> None:
+        """按 ``max_w × max_h`` 视口计算 best scale 并 set_scale（v2.2.3+）。
+
+        scale = min(max_w/raw_w, max_h/raw_h, 1.0) —— 不放大原图。
+        """
+        if max_w <= 0 or max_h <= 0:
+            raise ValueError(f"max_w/max_h must be > 0, got {max_w}x{max_h}")
+        scale_w = max_w / self._raw_w
+        scale_h = max_h / self._raw_h
+        self.set_scale(min(1.0, scale_w, scale_h))
+
+    def get_scale(self) -> float:
+        """返回当前显示 scale。"""
+        return self._scale
+
+    def zoom_in(self, factor: float = 1.25) -> None:
+        """放大（v2.2.3+）：scale × factor。"""
+        self.set_scale(self._scale * factor)
+
+    def zoom_out(self, factor: float = 1.25) -> None:
+        """缩小（v2.2.3+）：scale / factor。"""
+        self.set_scale(self._scale / factor)
+
+    def zoom_reset(self) -> None:
+        """重置到 1.0（原图大小，v2.2.3+）。"""
+        self.set_scale(1.0)
+
+    # ------------------------------------------------------------------
     # 鼠标事件
     # ------------------------------------------------------------------
 
