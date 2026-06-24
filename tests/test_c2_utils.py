@@ -23,7 +23,6 @@ from book_cut.detect import paper as paper_mod
 from book_cut.detect import trim as trim_mod
 from book_cut.detect._utils import adaptive_padding, to_gray_array, to_L_image
 
-
 # ============ _utils.adaptive_padding 与 paper.adaptive_padding 一致 ============
 
 

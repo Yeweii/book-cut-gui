@@ -16,7 +16,6 @@ from PIL import Image, ImageDraw
 
 from book_cut.detect.trim import _trim_margins_from_array, trim_margins
 
-
 # ----------------------------------------------------------------------------
 # 合成 fixture
 # ----------------------------------------------------------------------------

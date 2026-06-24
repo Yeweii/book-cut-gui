@@ -14,12 +14,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
 from book_cut.detect.trim import trim_margins
-
 
 # ----------------------------------------------------------------------------
 # 合成 fixture

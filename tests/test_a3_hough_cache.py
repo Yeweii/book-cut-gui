@@ -13,7 +13,6 @@ A3：``--split border --crop border`` 时 split_border 跑一次 Hough，
 from __future__ import annotations
 
 import time
-from pathlib import Path
 
 import numpy as np
 import pytest
@@ -212,7 +211,7 @@ def test_a3_faster_than_double_hough():
         result = split_border_with_rects_from_array(arr)
         return [
             crop_to_border_from_array(s, padding=10, page_rect=r)
-            for s, r in zip(result.sub_arrays, result.page_rects)
+            for s, r in zip(result.sub_arrays, result.page_rects, strict=False)
         ]
 
     # Warmup
@@ -246,9 +245,9 @@ def test_a3_pipeline_split_border_crop_border_end_to_end(tmp_path):
     2. 输出尺寸正常
     """
     import argparse
+    from io import BytesIO
 
     import pymupdf
-    from io import BytesIO
 
     # 合成 3 页双页图
     pages = []
@@ -294,7 +293,6 @@ def test_a3_rtl_swaps_page_rects_together():
     left_rect, right_rect = result.page_rects
 
     # 模拟 RTL 翻转
-    sub_arrs_rtl = [result.sub_arrays[1], result.sub_arrays[0]]
     page_rects_rtl = [result.page_rects[1], result.page_rects[0]]
 
     # 第一项应该是右页的 rect（在右子图坐标系，left 应较小）

@@ -14,7 +14,6 @@ from __future__ import annotations
 import tracemalloc
 
 import numpy as np
-import pytest
 
 from book_cut.preprocess.binarize import binarize_sauvola_from_array
 

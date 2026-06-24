@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "name": "尸子卷_浙江书局_光绪三年刊",
+  "odd_page": {
+    "top": 50,
+    "bottom": 40,
+    "inner": 80,
+    "outer": 30
+  },
+  "mirror_even": true,
+  "source_size": [4947, 7610],
+  "notes": "古籍双页扫描（尸子卷 0021.png 实测）。左边版框线密集，inner 加大到 80。"
+}

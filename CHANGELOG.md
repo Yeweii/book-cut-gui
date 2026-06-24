@@ -1,5 +1,38 @@
 # CHANGELOG
 
+## [0.3.0] - 2026-06-24 · v2.2（手动裁切工具）
+
+### Added
+- **`--crop manual` + 4 个 `--manual-*` 参数**：手动裁切工具，作为 auto 的兜底
+  - `--manual-odd-padding "T=50,B=40,I=80,O=30"` 或 `"50,40,80,30"`（顺序 T,B,I,O）
+  - `--manual-mirror-even`（默认 True，偶页自动 inner↔outer 镜像）
+  - `--manual-preset PATH`：从 JSON 加载 profile
+  - `--manual-save-preset PATH`：运行时保存为 JSON
+- **新模块 `book_cut.detect.manual`**（v2.2+）：
+  - `ManualCropProfile` dataclass（top/bottom/inner/outer + mirror_even + source_size + notes）
+  - `apply_manual_crop(arr, profile, is_even)`：按 profile 切出子图
+  - `parse_manual_padding(s)`：CLI 字符串 → 4 个 int
+  - `canvas_to_image` / `padding_from_rect`：拖框数学（纯函数，单测可独立验证）
+- **新模块 `book_cut.gui_canvas`**：`CropCanvas` 类（拖框 Canvas，鼠标交互 + 实时反算 padding）
+- **GUI "Manual Crop" 折叠面板**（crop_var=="manual" 时启用）：
+  - 4 个 Spinbox（Top/Bottom/Inner/Outer）+ Mirror checkbox
+  - "Load preset…" / "Save preset…" 按钮
+  - 与 `--crop manual` 联动
+- **preset 示例** `samples/crop_profiles/尸子卷_浙江书局_光绪三年刊.json`（嵌套 schema）
+- **JSON schema 两种格式**：
+  - 简洁：`{"top":50, "bottom":40, "inner":80, "outer":30, ...}`
+  - 嵌套：`{"odd_page": {"top":50, ...}, "mirror_even":true, "name":"...", ...}`
+
+### Changed
+- **orchestrator 新增 `crop_mode=="manual"` 分支**：manual profile 完全替代 auto crop
+- **CLI `--crop` choices** 加 `manual`
+- **行数预算**：orchestrator 850→900、pipeline 1540→1610（manual 模块 +233 在 detect 目录）
+
+### 与 v2.1 trim-ab 的关系
+互补：v2.1 增强 auto 算法（A+B）；v2.2 提供 manual 兜底工具
+- 疑难古籍（鱼尾密集、版框异形）→ manual 接管
+- 普通古籍 → auto 继续
+
 ## [0.2.0] - 2026-06-24 · v2.0
 
 ### Added

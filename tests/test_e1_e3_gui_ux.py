@@ -16,10 +16,8 @@ from __future__ import annotations
 
 import os
 import sys
-from pathlib import Path
 
 import pytest
-
 
 # ============ E1b: _suggest_output_dir 纯函数 ============
 
@@ -156,7 +154,6 @@ def test_e1a_morph_disabled_when_crop_none():
     import tkinter as tk
     from tkinter import ttk
 
-    from book_cut import gui
 
     # 复刻 run_gui() 里的 trace 逻辑（不启动 mainloop）
     root = tk.Tk()

@@ -19,7 +19,6 @@ from book_cut.detect.manual import (
     parse_manual_padding,
 )
 
-
 # ----------------------------------------------------------------------------
 # 合成 fixture：白纸 + 已知 padding 的内容
 # ----------------------------------------------------------------------------
@@ -66,6 +65,23 @@ def test_manual_crop_profile_json_default_fields():
     assert p2.mirror_even is True
     assert p2.source_size is None
     assert p2.notes == ""
+
+
+def test_manual_crop_profile_json_nested_odd_page():
+    """v2.2 嵌套 schema：``{"odd_page": {...}}`` 也能解析。"""
+    nested = (
+        '{"version":1,"name":"test","odd_page":'
+        '{"top":50,"bottom":40,"inner":80,"outer":30},'
+        '"mirror_even":true,"source_size":[4947,7610],"notes":"x"}'
+    )
+    p = ManualCropProfile.from_json(nested)
+    assert p.top == 50
+    assert p.bottom == 40
+    assert p.inner == 80
+    assert p.outer == 30
+    assert p.mirror_even is True
+    assert p.source_size == (4947, 7610)
+    assert p.notes == "x"
 
 
 # ----------------------------------------------------------------------------

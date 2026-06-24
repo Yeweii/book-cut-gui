@@ -16,15 +16,12 @@ TDD 约定：先写 RED（参数不存在 → TypeError），再实现 GREEN。
 from __future__ import annotations
 
 import numpy as np
-import pytest
 from PIL import Image, ImageDraw
 
 from book_cut.detect.trim import (
-    _trim_margins_from_array,
     detect_frame_bbox,
     trim_margins,
 )
-
 
 # ----------------------------------------------------------------------------
 # 合成 fixture

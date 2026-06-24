@@ -5,10 +5,10 @@ from __future__ import annotations
 import numpy as np
 from PIL import Image, ImageDraw
 
+from book_cut.detect._utils import adaptive_padding
 from book_cut.detect.border import crop_to_border
 from book_cut.detect.paper import (
     CropConfig,
-    adaptive_padding,
     aggregate_paper_color,
     default_crop_config,
     estimate_paper_color,

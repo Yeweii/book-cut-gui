@@ -12,4 +12,4 @@ import os
 # setdefault 不会覆盖用户已设的环境变量。
 os.environ.setdefault("CRYPTOGRAPHY_OPENSSL_NO_LEGACY", "1")
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"

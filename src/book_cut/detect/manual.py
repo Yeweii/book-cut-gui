@@ -13,7 +13,10 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import numpy as np
 
 
 @dataclass(frozen=True)
@@ -56,15 +59,32 @@ class ManualCropProfile:
         return json.dumps(data, ensure_ascii=False, sort_keys=False)
 
     @classmethod
-    def from_json(cls, s: str) -> "ManualCropProfile":
-        """从 JSON 字符串反序列化。"""
+    def from_json(cls, s: str) -> ManualCropProfile:
+        """从 JSON 字符串反序列化。
+
+        支持两种 schema：
+        - 简洁：``{"top":50, "bottom":40, "inner":80, "outer":30, ...}``
+        - 嵌套：``{"odd_page": {"top":50, ...}, "mirror_even": true, "name": "...", ...}``
+        """
         data = json.loads(s)
+        if "odd_page" in data:
+            # 嵌套格式
+            od = data["odd_page"]
+            top, bottom, inner, outer = (
+                int(od["top"]), int(od["bottom"]), int(od["inner"]), int(od["outer"])
+            )
+        else:
+            # 简洁格式
+            top, bottom, inner, outer = (
+                int(data["top"]), int(data["bottom"]),
+                int(data["inner"]), int(data["outer"]),
+            )
         ss = data.get("source_size")
         return cls(
-            top=int(data["top"]),
-            bottom=int(data["bottom"]),
-            inner=int(data["inner"]),
-            outer=int(data["outer"]),
+            top=top,
+            bottom=bottom,
+            inner=inner,
+            outer=outer,
             mirror_even=bool(data.get("mirror_even", True)),
             source_size=(int(ss[0]), int(ss[1])) if ss is not None else None,
             notes=str(data.get("notes", "")),
@@ -72,10 +92,10 @@ class ManualCropProfile:
 
 
 def apply_manual_crop(
-    arr: "np.ndarray",
+    arr: np.ndarray,
     profile: ManualCropProfile,
     is_even: bool = False,
-) -> "np.ndarray":
+) -> np.ndarray:
     """按 profile 切出子图（v2.2+）。
 
     Args:
@@ -89,7 +109,6 @@ def apply_manual_crop(
     Raises:
         ValueError: padding 越界（``top+bottom >= H`` 或 ``inner+outer >= W``）。
     """
-    import numpy as np  # local import to avoid forcing numpy at module import
 
     h, w = arr.shape[:2]
 

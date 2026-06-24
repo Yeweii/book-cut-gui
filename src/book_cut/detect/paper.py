@@ -22,7 +22,10 @@ from dataclasses import dataclass
 import numpy as np
 from PIL import Image
 
-from book_cut.detect._utils import adaptive_padding, to_gray_array
+from book_cut.detect._utils import (  # noqa: F401  (re-export for C2 backward compat)
+    adaptive_padding,
+    to_gray_array,
+)
 
 
 @dataclass(frozen=True)

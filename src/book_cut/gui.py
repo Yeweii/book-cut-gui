@@ -13,6 +13,9 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from book_cut import __version__
+from book_cut.detect.manual import (
+    ManualCropProfile,
+)
 from book_cut.io.page_size import (
     PDF_PAGE_SIZE_CHOICES,
     PDF_PAGE_UNIT_CHOICES,
@@ -299,7 +302,7 @@ def run_gui() -> None:
     crop_frame = ttk.Frame(root)
     crop_frame.grid(row=5, column=1, sticky="w", **pad)
     for i, (val, label) in enumerate(
-        [("none", "不裁"), ("trim", "切白边"), ("border", "版框内裁")]
+        [("none", "不裁"), ("trim", "切白边"), ("border", "版框内裁"), ("manual", "手动（拖框）")]
     ):
         ttk.Radiobutton(crop_frame, text=label, variable=crop_var, value=val).grid(
             row=0, column=i, padx=4
@@ -340,9 +343,102 @@ def run_gui() -> None:
     # v1.6+ E1a：crop=none 时抗杂质无意义，禁用 checkbox
     def _on_crop_change(*_args: object) -> None:
         morph_check.config(state="disabled" if crop_var.get() == "none" else "normal")
+        # v2.2+：manual 模式启用 Manual Crop 面板
+        manual_state = "normal" if crop_var.get() == "manual" else "disabled"
+        for w in manual_widgets:
+            try:
+                w.config(state=manual_state)
+            except tk.TclError:
+                pass  # Combobox 等特殊控件可能没有 state
 
     crop_var.trace_add("write", _on_crop_change)
     _on_crop_change()  # 初始化时跑一次对齐默认状态
+
+    # v2.2+：Manual Crop 面板（拖框 + 4 个 padding + preset 加载/保存）
+    manual_frame = ttk.LabelFrame(root, text="Manual Crop（v2.2+，override auto）")
+    manual_frame.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
+    # 4 个 padding
+    manual_pad_frame = ttk.Frame(manual_frame)
+    manual_pad_frame.grid(row=0, column=0, columnspan=3, sticky="w", **pad)
+    ttk.Label(manual_pad_frame, text="Top:").grid(row=0, column=0)
+    manual_top_var = tk.IntVar(value=50)
+    ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_top_var).grid(
+        row=0, column=1, padx=(2, 8)
+    )
+    ttk.Label(manual_pad_frame, text="Bottom:").grid(row=0, column=2)
+    manual_bottom_var = tk.IntVar(value=40)
+    ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_bottom_var).grid(
+        row=0, column=3, padx=(2, 8)
+    )
+    ttk.Label(manual_pad_frame, text="Inner:").grid(row=0, column=4)
+    manual_inner_var = tk.IntVar(value=80)
+    ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_inner_var).grid(
+        row=0, column=5, padx=(2, 8)
+    )
+    ttk.Label(manual_pad_frame, text="Outer:").grid(row=0, column=6)
+    manual_outer_var = tk.IntVar(value=30)
+    ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_outer_var).grid(
+        row=0, column=7, padx=(2, 8)
+    )
+
+    # Mirror + preset 按钮
+    manual_btn_frame = ttk.Frame(manual_frame)
+    manual_btn_frame.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
+    manual_mirror_var = tk.BooleanVar(value=True)
+    ttk.Checkbutton(
+        manual_btn_frame, text="Mirror to even pages (inner↔outer)",
+        variable=manual_mirror_var,
+    ).grid(row=0, column=0, padx=(0, 16))
+
+    def _save_manual_preset() -> None:
+        path = filedialog.asksaveasfilename(
+            title="保存 manual crop preset",
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json")],
+        )
+        if not path:
+            return
+        prof = ManualCropProfile(
+            top=manual_top_var.get(),
+            bottom=manual_bottom_var.get(),
+            inner=manual_inner_var.get(),
+            outer=manual_outer_var.get(),
+            mirror_even=manual_mirror_var.get(),
+        )
+        Path(path).write_text(prof.to_json())
+        messagebox.showinfo("已保存", f"Preset 已保存到\n{path}")
+
+    def _load_manual_preset() -> None:
+        path = filedialog.askopenfilename(
+            title="加载 manual crop preset",
+            filetypes=[("JSON", "*.json")],
+        )
+        if not path:
+            return
+        try:
+            prof = ManualCropProfile.from_json(Path(path).read_text())
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("加载失败", f"Preset 解析失败：\n{e}")
+            return
+        manual_top_var.set(prof.top)
+        manual_bottom_var.set(prof.bottom)
+        manual_inner_var.set(prof.inner)
+        manual_outer_var.set(prof.outer)
+        manual_mirror_var.set(prof.mirror_even)
+
+    ttk.Button(manual_btn_frame, text="Load preset…", command=_load_manual_preset).grid(
+        row=0, column=1, padx=4
+    )
+    ttk.Button(manual_btn_frame, text="Save preset…", command=_save_manual_preset).grid(
+        row=0, column=2, padx=4
+    )
+
+    # 用 conv 拿 manual 面板的子控件（用于 _on_crop_change 批量禁用）
+    manual_widgets: list[tk.Widget] = []
+    for child in manual_frame.winfo_children():
+        manual_widgets.append(child)
+        for sub in child.winfo_children():
+            manual_widgets.append(sub)
 
     # 二值化
     ttk.Label(root, text="二值化:").grid(row=6, column=0, sticky="e", **pad)
@@ -730,6 +826,14 @@ def run_gui() -> None:
             # v1.9+：图片预处理增强（chain 由勾选状态自动拼装）
             "preprocess": _build_preprocess_chain(),
             "preprocess_quality": PREPROCESS_QUALITY_MAP[preprocess_quality_var.get()],
+            # v2.2+：manual crop
+            "manual_odd_padding": (
+                f"T={manual_top_var.get()},B={manual_bottom_var.get()},"
+                f"I={manual_inner_var.get()},O={manual_outer_var.get()}"
+            ) if crop_var.get() == "manual" else None,
+            "manual_mirror_even": manual_mirror_var.get(),
+            "manual_preset": None,
+            "manual_save_preset": None,
         }
         t = threading.Thread(
             target=_run_pipeline_thread,

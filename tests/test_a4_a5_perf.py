@@ -10,11 +10,9 @@ import time
 from pathlib import Path
 
 import numpy as np
-import pytest
 
 from book_cut.pipeline import _first_and_count_pdfs, _resolve_outline_source
 from book_cut.preprocess.deskew import _detect_angle_projection
-
 
 # ============ A4 测试 ============
 
@@ -160,9 +158,9 @@ def test_a5_no_tilt_returns_near_zero():
 def test_a4_a5_pipeline_still_runs(tmp_path):
     """A4+A5 改动不影响 pipeline 端到端。"""
     import argparse
+    from io import BytesIO
 
     import pymupdf
-    from io import BytesIO
     from PIL import Image
 
     # 合成 2 页 PDF

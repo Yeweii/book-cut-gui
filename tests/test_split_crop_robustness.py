@@ -21,7 +21,7 @@ C 线（border padding 翻倍）：
 from __future__ import annotations
 
 import numpy as np
-from PIL import Image, ImageDraw
+from PIL import Image
 
 from book_cut.detect.border import crop_to_border_from_array
 from book_cut.detect.paper import CropConfig, _column_is_white
@@ -31,7 +31,6 @@ from book_cut.detect.trim import (
     trim_margins,
 )
 from book_cut.split.gutter import find_gutter_column_from_array
-
 
 # ============ A 线 · 切分抗伤字 ============
 

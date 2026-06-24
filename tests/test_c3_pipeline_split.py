@@ -17,13 +17,11 @@ from __future__ import annotations
 
 import importlib
 
-
 # ============ 模块独立 import ============
 
 
 def test_c3_pipeline_package_exists():
     """C3：``book_cut.pipeline`` 现在是包（不是模块）。"""
-    import book_cut.pipeline
 
     mod = importlib.import_module("book_cut.pipeline")
     # 验证是 package（有 __path__）
@@ -74,6 +72,8 @@ def test_c3_init_reexports_outline_helpers():
     from book_cut.pipeline import _first_and_count_pdfs, _resolve_outline_source
     from book_cut.pipeline.outline import (
         _first_and_count_pdfs as facp_outline,
+    )
+    from book_cut.pipeline.outline import (
         _resolve_outline_source as ros_outline,
     )
 
@@ -196,9 +196,9 @@ def test_c3_old_pipeline_py_removed():
 def test_c3_run_pipeline_end_to_end(tmp_path):
     """C3：``run_pipeline`` 端到端跑通合成 PDF（行为不变）。"""
     import argparse
+    from io import BytesIO
 
     import pymupdf
-    from io import BytesIO
     from PIL import Image
 
     # 合成 1 页双页图
@@ -246,9 +246,9 @@ def test_c3_run_pipeline_end_to_end(tmp_path):
 def test_c3_run_pipeline_with_pdf_output(tmp_path):
     """C3：``--pdf`` 输出 + outline 透传仍然工作（走 outline 模块）。"""
     import argparse
+    from io import BytesIO
 
     import pymupdf
-    from io import BytesIO
     from PIL import Image
 
     # 合成 1 页双页图
@@ -311,12 +311,11 @@ def test_split_none_skips_split(tmp_path):
 
     用户场景：扫描已经是单页（如手机拍摄），切分会误把内容切成两半。
     """
-    import argparse
     from PIL import Image
 
+    from book_cut.detect.paper import CropConfig
     from book_cut.io.loader import iter_pages
     from book_cut.pipeline.orchestrator import _compute_page
-    from book_cut.detect.paper import CropConfig
 
     # 800x1000 单页图，模拟"已经切分好的单页扫描"
     img = Image.new("L", (800, 1000), 220)

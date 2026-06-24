@@ -10,8 +10,6 @@
 
 from __future__ import annotations
 
-import os
-
 import numpy as np
 import pytest
 from PIL import Image
@@ -24,7 +22,6 @@ from book_cut.preprocess import (
     preprocess,
     sharpen,
 )
-
 
 # ---------------------------------------------------------------------------
 # 共享 fixtures
@@ -267,10 +264,9 @@ def test_chain_token_parsers():
 
 def test_compute_page_metrics_has_preprocess(monkeypatch):
     """_compute_page metrics 包含 preprocess 字段。"""
-    from types import SimpleNamespace
 
-    from book_cut.pipeline.orchestrator import _compute_page
     from book_cut.io.loader import PageInfo
+    from book_cut.pipeline.orchestrator import _compute_page
 
     monkeypatch.setenv("BOOKCUT_PREPROCESS_QUALITY", "balanced")
     page = PageInfo(
