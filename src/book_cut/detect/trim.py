@@ -161,6 +161,111 @@ def _safety_check_noise_aware(
     )
 
 
+# v2.1+ E2：trim 版框检测参数默认值（trim_frame 方案）
+_DEFAULT_FRAME_MIN_BBOX_RATIO = 0.30  # bbox ≥ 30% 图像面积
+_DEFAULT_FRAME_MAX_FILL_RATIO = 0.15  # 填充率 ≤ 15%（空心=边框）
+_DEFAULT_FRAME_ASPECT_RANGE = (0.5, 1.0)  # 页形 w/h
+_DEFAULT_FRAME_EDGE_MARGIN = 5  # bbox 距图边 ≥ 5px
+_DEFAULT_FRAME_MORPH_KERNEL = 5  # 修补版框线断裂的 CLOSE 核
+
+
+def detect_frame_bbox(
+    ink_mask: np.ndarray,
+    *,
+    min_bbox_ratio: float = _DEFAULT_FRAME_MIN_BBOX_RATIO,
+    max_fill_ratio: float = _DEFAULT_FRAME_MAX_FILL_RATIO,
+    aspect_range: tuple[float, float] = _DEFAULT_FRAME_ASPECT_RANGE,
+    edge_margin: int = _DEFAULT_FRAME_EDGE_MARGIN,
+    morph_kernel: int = _DEFAULT_FRAME_MORPH_KERNEL,
+) -> tuple[int, int, int, int] | None:
+    """检测最大的"空心矩形"连通区 bbox（即古籍版框/页面外边框）。
+
+    v2.1+ E2（trim_frame 方案，``docs/dev/2026-06-24-v2.1-trim-frame.md``）：
+    用作 trim 的"严格裁切边界"，替代"第一个含墨迹像素"的宽松策略。
+    解决古籍扫描中"版框外零散噪点/印章/页码"导致 trim 留过多白边的问题。
+
+    算法：
+        1. 形态学 CLOSE 修补版框线断裂（默认 5×5 核）
+        2. ``cv2.connectedComponentsWithStats`` 拿所有连通区
+        3. 筛候选（同时满足）：
+            - bbox_area / image_area ≥ ``min_bbox_ratio``（大面积）
+            - filled_pixels / bbox_area ≤ ``max_fill_ratio``（空心=边框）
+            - bbox aspect (w/h) ∈ ``aspect_range``（页形）
+            - bbox 不贴图边 ≥ ``edge_margin`` px（版框外有白边）
+        4. 取 bbox_area 最大的候选 → 版框 bbox
+
+    Args:
+        ink_mask: 二值 ink mask（bool 或 uint8，True=墨迹）。
+        min_bbox_ratio: bbox 面积占图像面积的最小比例（默认 0.30）。
+            太小（如页眉小框）会被滤掉。
+        max_fill_ratio: bbox 内墨迹占 bbox 面积的最大比例（默认 0.15）。
+            实心块（fill=100%）会被滤掉，只留空心框。
+        aspect_range: bbox 的 (w/h) 范围（默认 (0.5, 1.0)，适合竖版单页）。
+            双页扫描（横版）需调成 (1.0, 2.0)。
+        edge_margin: bbox 距图像边缘最小距离（默认 5 px）。
+            版框外必有白边，否则认为是扫描边线而非版框。
+        morph_kernel: 修补版框线断裂的 CLOSE 核大小（默认 5）。
+            太大可能合并多个版框；太小修补不了断裂。
+
+    Returns:
+        ``(top, bottom, left, right)``：版框 bbox（含），或 ``None``
+        （无候选 → 调用方走 fallback）。
+    """
+    if ink_mask is None or not ink_mask.any():
+        return None
+    mask_u8 = ink_mask.astype(np.uint8)
+    H, W = mask_u8.shape
+    total = H * W
+
+    # 步骤 1：形态学闭运算修补版框线断裂
+    if morph_kernel > 1:
+        kernel = np.ones((morph_kernel, morph_kernel), np.uint8)
+        closed = cv2.morphologyEx(mask_u8, cv2.MORPH_CLOSE, kernel)
+    else:
+        closed = mask_u8
+
+    # 步骤 2：连通域
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(closed, connectivity=8)
+    if n_labels <= 1:
+        return None
+
+    # 步骤 3：筛候选
+    candidates: list[tuple[int, tuple[int, int, int, int]]] = []
+    aspect_lo, aspect_hi = aspect_range
+    for i in range(1, n_labels):
+        x, y, w, h, area = stats[i]
+        bbox_area = int(w) * int(h)
+        if bbox_area <= 0:
+            continue
+        # 大面积过滤
+        if bbox_area / total < min_bbox_ratio:
+            continue
+        # 空心过滤（实心块 = 非版框）
+        if area / bbox_area > max_fill_ratio:
+            continue
+        # 页形过滤
+        aspect = w / h
+        if not (aspect_lo <= aspect <= aspect_hi):
+            continue
+        # 不贴边过滤（版框外有白边）
+        if x < edge_margin or y < edge_margin:
+            continue
+        if x + w > W - edge_margin:
+            continue
+        if y + h > H - edge_margin:
+            continue
+        top = int(y)
+        bottom = int(y + h - 1)
+        left = int(x)
+        right = int(x + w - 1)
+        candidates.append((bbox_area, (top, bottom, left, right)))
+
+    if not candidates:
+        return None
+    # 步骤 4：取 bbox 最大的（版框总比鱼尾/版心装饰大）
+    return max(candidates, key=lambda c: c[0])[1]
+
+
 def _clean_ink_mask(ink_mask: np.ndarray, use_morph: bool) -> np.ndarray:
     """v1.6+ B线：形态学开运算抗尘点（1-3 px 孤立点）。
 
@@ -197,6 +302,94 @@ def _clean_ink_mask(ink_mask: np.ndarray, use_morph: bool) -> np.ndarray:
     return cleaned.astype(bool)
 
 
+# v2.1+：CCA 主体过滤（trim B 方案）
+_ASPECT_THRESHOLD = 10.0  # aspect ratio > 此值视为狭长（版框线/注释横线）
+
+
+def _filter_main_components(
+    ink_mask: np.ndarray,
+    min_area: float,
+    gutter_band: tuple[float, float] | None = None,
+    gutter_bands: list[tuple[float, float]] | None = None,
+) -> np.ndarray:
+    """滤掉小连通区 + 狭长版框线，返回主体 mask。
+
+    v2.1+ B 方案（``docs/dev/2026-06-24-v2.1-trim-ab.md`` §4）。
+    v2.1+ D 方案（``docs/dev/2026-06-24-v2.1-trim-yuwei-preserve.md``）：可选
+    ``gutter_band`` 版心保护区 —— bbox 中心落在该列带的连通区豁免（保留鱼尾等
+    版心装饰）。
+    v2.1+ G 方案：``gutter_bands: list[tuple]`` 支持多个保护带（双页扫描右侧
+    副页保留）。连通区 bbox 中心列落在**任一** band 内即豁免 aspect 过滤。
+
+    滤除条件（任一满足即滤）：
+    1. area < ``min_area``（小噪点）
+    2. aspect ratio (max(h,w) / min(h,w)) > ``_ASPECT_THRESHOLD``（狭长版框线）
+
+    版心豁免：
+    - ``gutter_band`` (单 band, 向后兼容) 或 ``gutter_bands`` (多 band, v2.1+ G)
+    - 连通区 bbox 中心列落在任一带 → 跳过 aspect 过滤（保留版心装饰）
+    - 仍受 min_area 阈值约束（小噪点仍滤）
+
+    边界处理：
+    - min_area <= 0 → 原样返回（关闭 CCA 过滤）
+    - mask 全空 → 原样返回
+    - 过滤后无任何保留 → fallback 原 mask（避免 bbox 退化到全图）
+
+    Args:
+        ink_mask: 灰度图转出的二值 mask（bool）。
+        min_area: 保留连通区的最小面积阈值。
+        gutter_band: 版心保护带 (left_frac, right_frac)，None=关闭（向后兼容旧 API）。
+        gutter_bands: 版心保护带列表 [(L1, R1), (L2, R2), ...]，None=关闭（v2.1+ G）。
+            任一非空即合并到统一 band 列表中（``gutter_band`` 也算单元素）。
+
+    Returns:
+        过滤后的 mask（bool）。
+    """
+    if min_area <= 0:
+        return ink_mask
+    if not ink_mask.any():
+        return ink_mask
+    mask_u8 = ink_mask.astype(np.uint8)
+    h_total, w_total = mask_u8.shape
+    n_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask_u8, connectivity=8)
+    if n_labels <= 1:
+        return ink_mask
+    # v2.1+ G：合并单 band + 多 band 为统一 list
+    bands: list[tuple[float, float]] = []
+    if gutter_band is not None:
+        bands.append(gutter_band)
+    if gutter_bands:
+        bands.extend(gutter_bands)
+    keep = np.zeros_like(ink_mask, dtype=bool)
+    kept_any = False
+    # v2.1+ D：版心保护 —— 在版心带内的连通区使用更宽松的阈值
+    # （鱼尾/版心装饰条 area 普遍 < 100，但形态学上不是噪点）。
+    # 兜底：min_area_floor=4，只滤 1-3 px 单像素尘点。
+    GUTTER_MIN_AREA_FLOOR = 4
+    for i in range(1, n_labels):
+        x, y, w, h, area = stats[i]
+        # v2.1+ G：判断是否在任一 band 内（bbox 中心列）
+        in_gutter = False
+        if bands:
+            cx = x + w / 2.0
+            for left_frac, right_frac in bands:
+                if (left_frac * w_total) <= cx < (right_frac * w_total):
+                    in_gutter = True
+                    break
+        # v2.1+ D：版心内用更小的面积阈值（保留鱼尾小碎片）
+        effective_min_area = GUTTER_MIN_AREA_FLOOR if in_gutter else min_area
+        if area < effective_min_area:
+            continue
+        aspect = max(h, w) / max(min(h, w), 1)
+        # v2.1+ D：版心豁免 —— 在版心带内的狭长连通区不滤（保留版心装饰条）
+        if aspect > _ASPECT_THRESHOLD and not in_gutter:
+            continue
+        keep |= labels == i
+        kept_any = True
+    # fallback：所有连通区都被滤 → 保留原 mask
+    return keep if kept_any else ink_mask
+
+
 def _trim_margins_from_array(
     arr: np.ndarray,
     *,
@@ -204,6 +397,17 @@ def _trim_margins_from_array(
     threshold: int | None = None,
     padding: int | None = None,
     use_morph: bool = True,
+    trim_source: str = "gray",
+    min_component_ratio: float = 0.0,
+    extra_padding: int = 0,
+    gutter_band: tuple[float, float] | None = None,
+    gutter_bands: list[tuple[float, float]] | None = None,
+    horizontal: bool = True,
+    strict: bool = False,
+    trim_frame: bool = False,
+    trim_frame_min_ratio: float = _DEFAULT_FRAME_MIN_BBOX_RATIO,
+    trim_frame_max_fill: float = _DEFAULT_FRAME_MAX_FILL_RATIO,
+    trim_frame_aspect: tuple[float, float] = _DEFAULT_FRAME_ASPECT_RANGE,
 ) -> Image.Image:
     """trim 核心逻辑（v1.5+ A1：接受 ndarray，返回 Image）。
 
@@ -214,6 +418,52 @@ def _trim_margins_from_array(
     - 加 ``use_morph`` 参数控制形态学开运算（默认 True）
     - 加 safety margin 检查：内容贴图边 → 不裁
     - 统一 ``min_ink ≥ 3``（legacy 1→3，杀 JPEG 噪声）
+    - CLI opt-out：``--no-morph`` 关闭形态学（古籍飞白/极小字可见时用）
+
+    v2.1+ 改动：
+    - 加 ``strict`` 参数（v2.1+ B 方案）：True 时后置过滤稀疏行（排除页眉/页脚）。
+      算法：row ink 阈值 = max(50, max_row_ink × 0.1)，低于阈值的行不进 bbox。
+      与 A+B（C 选项 ``extra_padding``）互补：A+B 控制 column 过滤（aspect），
+      strict 控制 row 过滤（密度）。
+
+    v2.1+ 改动（trim A+B 实验，``docs/dev/2026-06-24-v2.1-trim-ab.md``）：
+    - 加 ``trim_source`` 参数："gray"（默认，行为不变）/"binarized"（走 binarize 拿 ink mask）
+    - 加 ``min_component_ratio`` 参数：>0 时启用 CCA 主体过滤（同时滤小连通区 + 狭长版框线）
+    - 加 ``extra_padding`` 参数：在 adaptive/legacy padding 之上**叠加** N 像素（默认 0）。
+      解决 A+B 启用后版框/版心标记紧贴输出边缘的问题。
+
+    Args:
+        arr: 灰度 ndarray (uint8, shape=(h,w))
+        config: 自适应裁切配置。None=legacy。
+        threshold: legacy 灰度阈值。None=240。config 优先。
+        padding: legacy padding。None=10。config 优先。
+        use_morph: 是否走形态学开运算清 1-3px 噪点。
+        trim_source: "gray"（默认）/ "binarized"（走 binarize 拿 mask，v2.1+ A 方案）
+        min_component_ratio: CCA 主体过滤阈值。0=关闭；>0=启用
+            （area < ratio*total OR aspect>10 → 滤掉）。v2.1+ B 方案。
+        extra_padding: v2.1+ C。在 adaptive/legacy padding 之上**叠加** N 像素。
+            默认 0，行为不变。>0 时给版框/版心标记留视觉呼吸空间。
+        gutter_band: v2.1+ D。版心保护区 (left_frac, right_frac)。
+            None=关闭（默认）。设值后，连通区 bbox 中心列落在该列带的连通区
+            豁免 CCA aspect 过滤（保留版心鱼尾等装饰），但仍受 min_area 约束。
+            需配合 ``min_component_ratio > 0`` 生效。
+        gutter_bands: v2.1+ G。版心保护区列表 ``[(L1, R1), (L2, R2), ...]``。
+            None=关闭（默认）。连通区 bbox 中心列落在**任一**带内即豁免。
+            适用于双页扫描右侧副页保留场景（同时保留中央版心 + 右侧副页区）。
+            需配合 ``min_component_ratio > 0`` 生效。与 ``gutter_band`` 共存时合并。
+        horizontal: v2.1+ E。是否横向裁切。
+            True=默认（行为不变）：横竖都按 ink bbox 裁切。
+            False=仅竖向裁切：保留输入全宽，只裁上下空白。
+            用于 ``--split none`` 模式（输入已是单页/double-page 不想拆分时）。
+        trim_frame: v2.1+ E2。是否启用版框检测（古籍版框页专用）。
+            True → 先用 ``detect_frame_bbox`` 找最大空心矩形作为 bbox，
+            失败则 fallback 到 ink bbox。False → 走原 trim 路径（向后兼容）。
+        trim_frame_min_ratio: v2.1+ E2。版框 bbox 占图像面积最小比例。
+            默认 0.30（详见 ``detect_frame_bbox``）。
+        trim_frame_max_fill: v2.1+ E2。版框 bbox 填充率上限（空心判定）。
+            默认 0.15。
+        trim_frame_aspect: v2.1+ E2。版框 bbox 宽高比范围。
+            默认 (0.5, 1.0)（竖版单页）。
     """
     h, w = arr.shape
 
@@ -229,12 +479,88 @@ def _trim_margins_from_array(
         pad = padding if padding is not None else 10
         # v1.6+：legacy 与 adaptive 对齐，min_ink ≥ 3（杀 JPEG 噪声 / 单像素尘点）
         min_ink = 3
+    # v2.1+ C：在 adaptive/legacy 之上叠加额外 padding（opt-in，向后兼容）
+    pad = pad + max(0, extra_padding)
 
-    ink_mask = arr < ink_thr
+    # v2.1+ A 方案：可选走二值化拿 ink mask（抗 paper color 估计偏差）
+    if trim_source == "binarized":
+        try:
+            from book_cut.preprocess.binarize import binarize
+
+            # 用 otsu（快 + 通用），binarize 内部走 sauvola 时更准但慢
+            # binary_mode="8bit" 拿 uint8 输出方便 < 128 比较
+            bin_img = binarize(arr, method="otsu", binary_mode="8bit")
+            bin_arr = np.asarray(bin_img.convert("L"))
+            ink_mask = bin_arr < 128
+        except Exception:
+            # binarize 失败 → fallback 到 gray 路径（保底）
+            ink_mask = arr < ink_thr
+    else:
+        ink_mask = arr < ink_thr
+
     ink_mask = _clean_ink_mask(ink_mask, use_morph=use_morph)
 
+    # v2.1+ B 方案：CCA 主体过滤（同时滤小连通区 + 狭长版框线）
+    # v2.1+ D：gutter_band 启用后，版心带内连通区豁免 aspect 过滤（保留鱼尾）
+    # v2.1+ G：gutter_bands 列表支持多个保护带（双页扫描右侧副页保留）
+    if min_component_ratio > 0:
+        ink_mask = _filter_main_components(
+            ink_mask,
+            min_component_ratio * ink_mask.size,
+            gutter_band=gutter_band,
+            gutter_bands=gutter_bands,
+        )
+
+    # v2.1+ E2：版框检测 —— 优先用最大空心矩形 bbox
+    # 成功 → 用版框 bbox 替代下面 ink bbox 计算
+    # 失败 → fallback 到 ink bbox（与原 trim 行为一致）
+    frame_bbox = None
+    if trim_frame:
+        frame_bbox = detect_frame_bbox(
+            ink_mask,
+            min_bbox_ratio=trim_frame_min_ratio,
+            max_fill_ratio=trim_frame_max_fill,
+            aspect_range=trim_frame_aspect,
+        )
+
+    if frame_bbox is not None:
+        top, bottom, left, right = frame_bbox
+        # 版框命中：跳过 ink bbox 计算（直接走 safety + padding）
+        col_longest = _longest_dark_run_per_col(arr, dark_thr=ink_thr)
+        row_longest = _longest_dark_run_per_row(arr, dark_thr=ink_thr)
+
+        safety_strict = _safety_margin(h, w)
+        if _safety_check_noise_aware(
+            top, bottom, left, right, h, w, safety_strict, row_longest, col_longest
+        ):
+            safety_relaxed = _safety_margin_relaxed(h, w)
+            if _safety_check_noise_aware(
+                top, bottom, left, right, h, w, safety_relaxed, row_longest, col_longest
+            ):
+                return _to_L_image(arr)
+
+        # 应用 padding（不超出原图）
+        top = max(0, top - pad)
+        left = max(0, left - pad)
+        bottom = min(h - 1, bottom + pad)
+        right = min(w - 1, right + pad)
+
+        if bottom <= top or right <= left:
+            return _to_L_image(arr)
+
+        return _to_L_image(arr[top : bottom + 1, left : right + 1])
+
+    # 常规路径：ink bbox
     row_has_content = ink_mask.sum(axis=1) >= min_ink
     col_has_content = ink_mask.sum(axis=0) >= min_ink
+
+    # v2.1+ B 方案：strict 后置过滤 —— 排除稀疏行（页眉/页脚/边缘噪点）
+    # 阈值：max(50, max_row_ink × 0.1)，自适应 + 50 兜底
+    if strict:
+        row_ink = ink_mask.sum(axis=1)
+        max_row_ink = int(row_ink.max()) if len(row_ink) > 0 else 0
+        strict_threshold = max(50, int(max_row_ink * 0.1))
+        row_has_content = row_ink >= strict_threshold
 
     rows_idx = np.where(row_has_content)[0]
     cols_idx = np.where(col_has_content)[0]
@@ -245,8 +571,13 @@ def _trim_margins_from_array(
 
     top = int(rows_idx[0])
     bottom = int(rows_idx[-1])
-    left = int(cols_idx[0])
-    right = int(cols_idx[-1])
+    # v2.1+ E：horizontal=False 时保留输入全宽（不裁左右）
+    if horizontal:
+        left = int(cols_idx[0])
+        right = int(cols_idx[-1])
+    else:
+        left = 0
+        right = w - 1
 
     # v1.9.2 B：safety 检查的"噪点豁免"。
     # 旧逻辑只看 col/row 位置：贴边 → safety 命中 → 不裁。
@@ -286,6 +617,17 @@ def trim_margins(
     padding: int | None = None,
     config: CropConfig | None = None,
     use_morph: bool = True,
+    trim_source: str = "gray",
+    min_component_ratio: float = 0.0,
+    extra_padding: int = 0,
+    gutter_band: tuple[float, float] | None = None,
+    gutter_bands: list[tuple[float, float]] | None = None,
+    horizontal: bool = True,
+    strict: bool = False,
+    trim_frame: bool = False,
+    trim_frame_min_ratio: float = _DEFAULT_FRAME_MIN_BBOX_RATIO,
+    trim_frame_max_fill: float = _DEFAULT_FRAME_MAX_FILL_RATIO,
+    trim_frame_aspect: tuple[float, float] = _DEFAULT_FRAME_ASPECT_RANGE,
 ) -> Image.Image:
     """去掉图片四周的白边。
 
@@ -293,6 +635,8 @@ def trim_margins(
 
     v1.5+ A1：薄包装，convert("L") 后调 ``_trim_margins_from_array``。
     v1.6+ 加 ``use_morph`` 参数（默认 True），CLI ``--no-morph`` 关闭形态学。
+    v2.1+ 加 ``trim_source`` / ``min_component_ratio`` 参数（trim A+B 实验）。
+    v2.1+ 加 ``extra_padding`` 参数（trim C：在 adaptive 之上叠加 N 像素）。
 
     Args:
         image: 输入图像。
@@ -303,6 +647,14 @@ def trim_margins(
         config: 自适应裁切配置。``None`` = legacy 模式。
         use_morph: 是否走形态学开运算（v1.6+ B线，默认 True）。
             关闭后保留 1-3 px 飞白/极小字，但失去抗尘点能力。
+        trim_source: v2.1+ A 方案。"gray"（默认）/ "binarized"。
+        min_component_ratio: v2.1+ B 方案。0=关闭；>0=启用 CCA 主体过滤。
+        extra_padding: v2.1+ C。在 adaptive/legacy padding 之上叠加 N 像素（默认 0）。
+        gutter_band: v2.1+ D。版心保护区 (left_frac, right_frac)，None=关闭。
+        gutter_bands: v2.1+ G。版心保护区列表 [(L1, R1), (L2, R2), ...]，None=关闭。
+            连通区 bbox 中心列落在任一带内即豁免 aspect 过滤。
+        horizontal: v2.1+ E。是否横向裁切（默认 True）。
+            False=保留输入全宽，只裁上下空白（``--split none`` 模式）。
 
     Returns:
         裁切后的图像。
@@ -310,5 +662,20 @@ def trim_margins(
     # v1.6+ C2：灰度转换走 ``detect._utils.to_gray_array``（行为等价）
     arr = to_gray_array(image)
     return _trim_margins_from_array(
-        arr, config=config, threshold=threshold, padding=padding, use_morph=use_morph
+        arr,
+        config=config,
+        threshold=threshold,
+        padding=padding,
+        use_morph=use_morph,
+        trim_source=trim_source,
+        min_component_ratio=min_component_ratio,
+        extra_padding=extra_padding,
+        gutter_band=gutter_band,
+        gutter_bands=gutter_bands,
+        horizontal=horizontal,
+        strict=strict,
+        trim_frame=trim_frame,
+        trim_frame_min_ratio=trim_frame_min_ratio,
+        trim_frame_max_fill=trim_frame_max_fill,
+        trim_frame_aspect=trim_frame_aspect,
     )

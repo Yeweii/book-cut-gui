@@ -51,6 +51,58 @@ from book_cut.preprocess.binarize import BinaryMode, binarize
 _TIMING_ENABLED = True
 
 
+def _parse_gutter_band(value: str | None) -> tuple[float, float] | None:
+    """v2.1+ D：解析 ``--trim-gutter-band`` 字符串 → (left, right) 版心带。
+
+    支持格式：
+    - ``"L,R"``：显式百分比（如 ``"0.35,0.5"``）
+    - ``None`` / 空串：关闭（默认）
+    - ``"auto"``：暂等同 ``None``（未来按 split 信息推断）
+    """
+    if value is None or value == "" or value == "auto":
+        return None
+    try:
+        left_str, right_str = value.split(",")
+        left, right = float(left_str), float(right_str)
+        if not (0.0 <= left < right <= 1.0):
+            raise ValueError
+        return (left, right)
+    except (ValueError, AttributeError) as e:
+        raise ValueError(
+            f"--trim-gutter-band 格式错误: {value!r}（期望 'L,R' 如 '0.35,0.5'）"
+        ) from e
+
+
+def _parse_gutter_bands(value: str | None) -> list[tuple[float, float]] | None:
+    """v2.1+ G：解析 ``--trim-gutter-bands`` 字符串 → list[(L, R)] 版心带列表。
+
+    支持格式：
+    - ``"L1,R1,L2,R2,..."``：多个带（如 ``"0.4,0.5,0.7,0.9"``）
+    - ``None`` / 空串：关闭（默认）
+    - 必须有偶数个数字（每对 L,R 构成一个带）
+    """
+    if value is None or value == "":
+        return None
+    parts = [p.strip() for p in value.split(",") if p.strip()]
+    if len(parts) == 0 or len(parts) % 2 != 0:
+        raise ValueError(
+            f"--trim-gutter-bands 格式错误: {value!r}（期望 'L1,R1,L2,R2,...' 偶数个数字）"
+        )
+    try:
+        bands: list[tuple[float, float]] = []
+        for i in range(0, len(parts), 2):
+            left = float(parts[i])
+            right = float(parts[i + 1])
+            if not (0.0 <= left < right <= 1.0):
+                raise ValueError
+            bands.append((left, right))
+        return bands
+    except ValueError as e:
+        raise ValueError(
+            f"--trim-gutter-bands 格式错误: {value!r}（期望 'L1,R1,...' 如 '0.4,0.5,0.7,0.9'）"
+        ) from e
+
+
 def _split_from_array(arr: np.ndarray, strategy: str, auto_single_page: bool = True) -> list:
     """v1.5+ A1：arr 路径的 splitter 分派。"""
     from book_cut.split.border import split_border_from_array
@@ -72,6 +124,16 @@ def _crop_pages_from_arrays(
     configs: list | None = None,
     use_morph: bool = True,
     page_rects: list | None = None,
+    trim_source: str = "gray",
+    min_component_ratio: float = 0.0,
+    extra_padding: int = 0,
+    gutter_band: tuple[float, float] | None = None,
+    gutter_bands: list[tuple[float, float]] | None = None,
+    horizontal: bool = True,
+    trim_strict: bool = False,
+    trim_frame: bool = False,
+    trim_frame_min_ratio: float = 0.30,
+    trim_frame_max_fill: float = 0.15,
 ) -> list:
     """v1.5+ A1：对 arr 列表裁切，每张裁成 Image（v1.5+ per-page override）。
 
@@ -83,6 +145,14 @@ def _crop_pages_from_arrays(
         use_morph: v1.6+ B线：trim/border fallback 是否走形态学开运算。
         page_rects: v1.6+ A3 split_border 缓存的每子图版框 rect。
             ``None`` 或 ``[None, ...]`` → crop 自跑 Hough。
+        trim_source: v2.1+ A 方案：trim 的 ink mask 来源。
+        min_component_ratio: v2.1+ B 方案：CCA 主体过滤阈值。
+        extra_padding: v2.1+ C。在 adaptive padding 之上叠加 N 像素。
+        gutter_band: v2.1+ D。版心保护区 (left_frac, right_frac)。
+        gutter_bands: v2.1+ G。版心保护区列表 [(L1, R1), (L2, R2), ...]。
+            多带豁免，适用于双页扫描右侧副页保留场景。与 ``gutter_band`` 共存时合并。
+        horizontal: v2.1+ E。是否横向裁切。``--split none`` 时设为 ``False``，
+            保留输入全宽（不裁左右），只裁上下空白。
 
     说明：per-page override 让每张子图独立决策 config（详见
     ``_resolve_per_page_config``）。本函数只做"按 configs 列表逐张裁切"。
@@ -91,7 +161,21 @@ def _crop_pages_from_arrays(
     if configs is None:
         # 向后兼容：所有子图用同一 config
         return _crop_pages_from_arrays_with_config(
-            sub_arrs, mode, None, use_morph=use_morph, page_rects=page_rects
+            sub_arrs,
+            mode,
+            None,
+            use_morph=use_morph,
+            page_rects=page_rects,
+            trim_source=trim_source,
+            min_component_ratio=min_component_ratio,
+            extra_padding=extra_padding,
+            gutter_band=gutter_band,
+            gutter_bands=gutter_bands,
+            horizontal=horizontal,
+            trim_strict=trim_strict,
+            trim_frame=trim_frame,
+            trim_frame_min_ratio=trim_frame_min_ratio,
+            trim_frame_max_fill=trim_frame_max_fill,
         )
     if len(configs) != len(sub_arrs):
         raise ValueError(f"configs 长度 {len(configs)} ≠ sub_arrs 长度 {len(sub_arrs)}")
@@ -101,24 +185,74 @@ def _crop_pages_from_arrays(
         sub_rects = [page_rects[i]] if page_rects else None
         out.extend(
             _crop_pages_from_arrays_with_config(
-                [a], mode, c, use_morph=use_morph, page_rects=sub_rects
+                [a],
+                mode,
+                c,
+                use_morph=use_morph,
+                page_rects=sub_rects,
+                trim_source=trim_source,
+                min_component_ratio=min_component_ratio,
+                extra_padding=extra_padding,
+                gutter_band=gutter_band,
+                gutter_bands=gutter_bands,
+                horizontal=horizontal,
+                trim_strict=trim_strict,
+                trim_frame=trim_frame,
+                trim_frame_min_ratio=trim_frame_min_ratio,
+                trim_frame_max_fill=trim_frame_max_fill,
             )
         )
     return out
 
 
 def _crop_pages_from_arrays_with_config(
-    sub_arrs: list, mode: str, config, use_morph: bool = True, page_rects: list | None = None
+    sub_arrs: list,
+    mode: str,
+    config,
+    use_morph: bool = True,
+    page_rects: list | None = None,
+    trim_source: str = "gray",
+    min_component_ratio: float = 0.0,
+    extra_padding: int = 0,
+    gutter_band: tuple[float, float] | None = None,
+    gutter_bands: list[tuple[float, float]] | None = None,
+    horizontal: bool = True,
+    trim_strict: bool = False,
+    trim_frame: bool = False,
+    trim_frame_min_ratio: float = 0.30,
+    trim_frame_max_fill: float = 0.15,
 ) -> list:
     """``_crop_pages_from_arrays`` 的内部单 config helper。
 
     v1.6+ 加 ``use_morph`` 参数（B线）+ ``page_rects`` 参数（A3 缓存）。
+    v2.1+ 加 ``trim_source`` / ``min_component_ratio`` / ``extra_padding`` 参数。
+    v2.1+ 加 ``gutter_band`` 参数（D 方案：版心保护区）。
+    v2.1+ 加 ``gutter_bands`` 参数（G 方案：多 band 豁免）。
+    v2.1+ 加 ``horizontal`` 参数（E 方案：保留全宽，``--split none`` 时使用）。
+    v2.1+ E2：加 ``trim_frame`` 参数（F 方案：版框检测）。
     """
     from book_cut.detect.border import crop_to_border_from_array
     from book_cut.detect.trim import _trim_margins_from_array
 
     if mode == "trim":
-        return [_trim_margins_from_array(a, config=config, use_morph=use_morph) for a in sub_arrs]
+        return [
+            _trim_margins_from_array(
+                a,
+                config=config,
+                use_morph=use_morph,
+                trim_source=trim_source,
+                min_component_ratio=min_component_ratio,
+                extra_padding=extra_padding,
+                gutter_band=gutter_band,
+                gutter_bands=gutter_bands,
+                horizontal=horizontal,
+                strict=trim_strict,
+                trim_frame=trim_frame,
+                trim_frame_min_ratio=trim_frame_min_ratio,
+                trim_frame_max_fill=trim_frame_max_fill,
+            )
+            for a in sub_arrs
+        ]
     if mode == "border":
         # v1.6+ A3：page_rects[i] 给 crop 复用 split 阶段的 Hough 结果
         rects = page_rects if page_rects else [None] * len(sub_arrs)
@@ -202,6 +336,16 @@ def _compute_page(
     is_sampled_page: bool,
     preprocess_chain: list[str] | None = None,
     preprocess_quality: str = "balanced",
+    trim_source: str = "gray",
+    min_component_ratio: float = 0.0,
+    extra_padding: int = 0,
+    gutter_band: tuple[float, float] | None = None,
+    gutter_bands: list[tuple[float, float]] | None = None,
+    horizontal: bool = True,
+    trim_strict: bool = False,
+    trim_frame: bool = False,
+    trim_frame_min_ratio: float = 0.30,
+    trim_frame_max_fill: float = 0.15,
 ) -> dict:
     """v1.8+ 抽出的纯计算：处理单页但不写盘。
 
@@ -268,7 +412,21 @@ def _compute_page(
     elif is_sampled_page:
         configs = [crop_config] * len(sub_arrs)
         sub_pages = _crop_pages_from_arrays(
-            sub_arrs, crop_mode, configs=configs, use_morph=use_morph, page_rects=page_rects
+            sub_arrs,
+            crop_mode,
+            configs=configs,
+            use_morph=use_morph,
+            page_rects=page_rects,
+            trim_source=trim_source,
+            min_component_ratio=min_component_ratio,
+            extra_padding=extra_padding,
+            gutter_band=gutter_band,
+            gutter_bands=gutter_bands,
+            horizontal=horizontal,
+            trim_strict=trim_strict,
+            trim_frame=trim_frame,
+            trim_frame_min_ratio=trim_frame_min_ratio,
+            trim_frame_max_fill=trim_frame_max_fill,
         )
     else:
         per_page_configs = [
@@ -280,6 +438,16 @@ def _compute_page(
             configs=per_page_configs,
             use_morph=use_morph,
             page_rects=page_rects,
+            trim_source=trim_source,
+            min_component_ratio=min_component_ratio,
+            extra_padding=extra_padding,
+            gutter_band=gutter_band,
+            gutter_bands=gutter_bands,
+            horizontal=horizontal,
+            trim_strict=trim_strict,
+            trim_frame=trim_frame,
+            trim_frame_min_ratio=trim_frame_min_ratio,
+            trim_frame_max_fill=trim_frame_max_fill,
         )
     t_crop = time.perf_counter() - t_crop_start if _TIMING_ENABLED else 0.0
 
@@ -379,6 +547,36 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
     preprocess_quality: str = getattr(args, "preprocess_quality", "balanced")
     # v2.0 新增：二值化输出模式（默认 1bit，体积 8x 缩减；8bit = v1.9 行为）
     binary_mode: BinaryMode = getattr(args, "binary_mode", "1bit")
+    # v2.1+：trim A 方案 —— 二值化 trim source
+    trim_source: str = getattr(args, "trim_source", "gray")
+    # v2.1+：trim B 方案 —— CCA 主体过滤
+    min_component_ratio: float = getattr(args, "trim_min_component_ratio", 0.0)
+    # v2.1+：trim C 方案 —— 在 adaptive padding 之上叠加额外 padding
+    extra_padding: int = int(getattr(args, "trim_padding", 0))
+    # v2.1+：trim D 方案 —— 版心保护区 (left_frac, right_frac) 或 None
+    gutter_band: tuple[float, float] | None = _parse_gutter_band(
+        getattr(args, "trim_gutter_band", None)
+    )
+    # v2.1+ G 方案：trim 多 band 豁免（双页扫描右侧副页保留）
+    gutter_bands_list: list[tuple[float, float]] | None = _parse_gutter_bands(
+        getattr(args, "trim_gutter_bands", None)
+    )
+    # 合并单 band + 多 band 为统一 list（避免重复）
+    gutter_bands: list[tuple[float, float]] | None = None
+    if gutter_band is not None or gutter_bands_list:
+        gutter_bands = []
+        if gutter_band is not None:
+            gutter_bands.append(gutter_band)
+        if gutter_bands_list:
+            gutter_bands.extend(gutter_bands_list)
+    # v2.1+ E：--split none 时 trim 不裁左右，保留输入全宽（只裁上下空白）
+    horizontal: bool = (args.split != "none")
+    # v2.1+ B 方案：trim strict 后置过滤（排除稀疏页眉/页脚行）
+    trim_strict: bool = bool(getattr(args, "trim_strict", False))
+    # v2.1+ E2：trim 版框检测
+    trim_frame: bool = bool(getattr(args, "trim_frame", False))
+    trim_frame_min_ratio: float = float(getattr(args, "trim_frame_min_ratio", 0.30))
+    trim_frame_max_fill: float = float(getattr(args, "trim_frame_max_fill", 0.15))
     book_name = input_path.stem if input_path.is_file() else input_path.name
 
     # v1.7：决定 (target_w, target_h) —— None 表示 keep（不统一）。
@@ -527,6 +725,16 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             use_morph=use_morph,
             preprocess_chain=preprocess_chain,
             preprocess_quality=preprocess_quality,
+            trim_source=trim_source,
+            min_component_ratio=min_component_ratio,
+            extra_padding=extra_padding,
+            gutter_band=gutter_band,
+            gutter_bands=gutter_bands,
+            horizontal=horizontal,
+            trim_strict=trim_strict,
+            trim_frame=trim_frame,
+            trim_frame_min_ratio=trim_frame_min_ratio,
+            trim_frame_max_fill=trim_frame_max_fill,
             cancel_event=cancel_event,
         )
         return  # dry-run 提前退出：不写 image_paths，不生成 PDF
@@ -548,6 +756,16 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
         is_sampled_page=True,
         preprocess_chain=preprocess_chain,
         preprocess_quality=preprocess_quality,
+        trim_source=trim_source,
+        min_component_ratio=min_component_ratio,
+        extra_padding=extra_padding,
+        gutter_band=gutter_band,
+        gutter_bands=gutter_bands,
+        horizontal=horizontal,
+        trim_strict=trim_strict,
+        trim_frame=trim_frame,
+        trim_frame_min_ratio=trim_frame_min_ratio,
+        trim_frame_max_fill=trim_frame_max_fill,
     )
     _save_subpages(first_result["sub_pages"], first_page)
 
@@ -574,6 +792,16 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             is_sampled_page=(i < sampled_remaining),
             preprocess_chain=preprocess_chain,
             preprocess_quality=preprocess_quality,
+            trim_source=trim_source,
+            min_component_ratio=min_component_ratio,
+            extra_padding=extra_padding,
+            gutter_band=gutter_band,
+            gutter_bands=gutter_bands,
+            horizontal=horizontal,
+            trim_strict=trim_strict,
+            trim_frame=trim_frame,
+            trim_frame_min_ratio=trim_frame_min_ratio,
+            trim_frame_max_fill=trim_frame_max_fill,
         )
         _save_subpages(result["sub_pages"], page)
 

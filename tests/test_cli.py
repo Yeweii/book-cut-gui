@@ -62,11 +62,72 @@ def test_cli_paper_deviation_flag_accepted():
     assert "--paper-deviation" in result.stdout
 
 
+def test_cli_trim_source_flag_accepted():
+    """v2.1+ ``--trim-source`` flag 存在（trim A 方案）。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert "--trim-source" in result.stdout
+
+
+def test_cli_trim_min_component_ratio_flag_accepted():
+    """v2.1+ ``--trim-min-component-ratio`` flag 存在（trim B 方案）。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert "--trim-min-component-ratio" in result.stdout
+
+
+def test_cli_trim_padding_flag_accepted():
+    """v2.1+ ``--trim-padding`` flag 存在（trim C 方案）。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert "--trim-padding" in result.stdout
+
+
+def test_cli_trim_gutter_band_flag_accepted():
+    """v2.1+ ``--trim-gutter-band`` flag 存在（trim D 方案）。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert "--trim-gutter-band" in result.stdout
+
+
+def test_cli_adaptive_padding_flag_accepted():
+    """v2.1+ ``--adaptive-padding`` flag 存在（adaptive padding 覆盖）。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert "--adaptive-padding" in result.stdout
+
+
 def test_cli_runs_no_morph(tmp_path):
     """v1.6+ ``--no-morph`` 端到端跑通：合成 PDF → --no-morph → 不报错。"""
+    from io import BytesIO
+
     import numpy as np
     import pymupdf
-    from io import BytesIO
     from PIL import Image
 
     # 合成 3 页 PDF：每页有 1-2 个 1px 孤立尘点（≤ min_ink=3 不触发 trim）

@@ -39,6 +39,16 @@ def run_dry_run(
     use_morph: bool,
     preprocess_chain: list[str] | None = None,
     preprocess_quality: str = "balanced",
+    trim_source: str = "gray",
+    min_component_ratio: float = 0.0,
+    extra_padding: int = 0,
+    gutter_band: tuple[float, float] | None = None,
+    gutter_bands: list[tuple[float, float]] | None = None,
+    horizontal: bool = True,
+    trim_strict: bool = False,
+    trim_frame: bool = False,
+    trim_frame_min_ratio: float = 0.30,
+    trim_frame_max_fill: float = 0.15,
     cancel_event: threading.Event | None = None,
 ) -> None:
     """跑 dry-run：处理前 sample_n 页 + 渲染预览 + 写 summary。
@@ -70,6 +80,16 @@ def run_dry_run(
         is_sampled_page=True,
         preprocess_chain=preprocess_chain,
         preprocess_quality=preprocess_quality,
+        trim_source=trim_source,
+        min_component_ratio=min_component_ratio,
+        extra_padding=extra_padding,
+        gutter_band=gutter_band,
+        gutter_bands=gutter_bands,
+        horizontal=horizontal,
+        trim_strict=trim_strict,
+        trim_frame=trim_frame,
+        trim_frame_min_ratio=trim_frame_min_ratio,
+        trim_frame_max_fill=trim_frame_max_fill,
     )
     sample_results.append(first_result)
 
@@ -95,6 +115,16 @@ def run_dry_run(
             is_sampled_page=(i < sampled_remaining),
             preprocess_chain=preprocess_chain,
             preprocess_quality=preprocess_quality,
+            trim_source=trim_source,
+            min_component_ratio=min_component_ratio,
+            extra_padding=extra_padding,
+            gutter_band=gutter_band,
+            gutter_bands=gutter_bands,
+            horizontal=horizontal,
+            trim_strict=trim_strict,
+            trim_frame=trim_frame,
+            trim_frame_min_ratio=trim_frame_min_ratio,
+            trim_frame_max_fill=trim_frame_max_fill,
         )
         sample_results.append(result)
 

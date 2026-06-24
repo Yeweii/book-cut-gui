@@ -76,6 +76,109 @@ def build_parser() -> argparse.ArgumentParser:
         "（1-2 px 笔画）会被形态学当尘点吃掉；遇到此场景用 --no-morph 保留。"
         "默认开（抗 1-3 px 尘点 / 折痕）。",
     )
+    # v2.1+：trim A 方案 —— 二值化 trim source
+    parser.add_argument(
+        "--trim-source",
+        choices=["gray", "binarized"],
+        default="gray",
+        help="trim 的 ink mask 来源（v2.1+）："
+        "gray=灰度阈值（默认，行为不变）/"
+        "binarized=走 otsu 二值化拿 mask（抗 paper color 估计偏差 / 暗角）。"
+        "需配合 --crop trim 生效。",
+    )
+    # v2.1+：trim B 方案 —— CCA 主体过滤
+    parser.add_argument(
+        "--trim-min-component-ratio",
+        type=float,
+        default=0.0,
+        help="trim CCA 主体过滤阈值（v2.1+）。"
+        "0=关闭（默认，行为不变）；>0=启用，"
+        "滤除 area < ratio × 总像素 的小噪点 和 aspect > 10 的狭长版框线。"
+        "建议 0.0001~0.001；过大（如 0.5）→ fallback 原 mask。"
+        "需配合 --crop trim 生效。",
+    )
+    # v2.1+：trim C 方案 —— 在 adaptive padding 之上叠加额外 padding
+    parser.add_argument(
+        "--trim-padding",
+        type=int,
+        default=0,
+        help="trim 在 adaptive padding 之上额外叠加的像素数（v2.1+；默认 0）。"
+        "适用于 --trim-min-component-ratio > 0 时，版框/版心标记被 mask 滤掉，"
+        "默认 30px padding 不足以让版心标记（鱼尾/边栏）远离输出边。"
+        "建议 30~60；过大会损失更多画面。"
+        "需配合 --crop trim 生效。",
+    )
+    # v2.1+：trim D 方案 —— 版心保护区
+    parser.add_argument(
+        "--trim-gutter-band",
+        type=str,
+        default=None,
+        help="trim 版心保护区 (v2.1+)，格式 'L,R'（如 '0.35,0.5'），"
+        "其中 L/R 为版心带左右边界占图像宽度的比例。"
+        "在版心带内的连通区豁免 CCA aspect 过滤（保留鱼尾/版心装饰），"
+        "但仍受 min_area 阈值约束（仅滤 1-3 px 单像素噪点）。"
+        "需配合 --trim-min-component-ratio > 0 生效。"
+        "古籍版心参考：未分割图像（中部）='0.4,0.6'；"
+        "分割后左页（鱼尾在右）='0.7,1.0'；右页（鱼尾在左）='0.0,0.3'。"
+        "多 band 场景请用 --trim-gutter-bands（可与本参数共存合并）。",
+    )
+    # v2.1+ G 方案：trim 多 band 豁免（双页扫描右侧副页保留）
+    parser.add_argument(
+        "--trim-gutter-bands",
+        type=str,
+        default=None,
+        help="trim 多版心保护区 (v2.1+)，格式 'L1,R1,L2,R2,...'（如 '0.4,0.5,0.7,0.9'）。"
+        "连通区 bbox 中心列落在**任一**带内即豁免 CCA aspect 过滤。"
+        "适用于双页扫描 + --split none：同时保留中央版心 + 右侧副页区。"
+        "需配合 --trim-min-component-ratio > 0 生效。"
+        "与 --trim-gutter-band 共存时合并为统一 band 列表。",
+    )
+    # v2.1+ B 方案：trim strict 后置过滤（排除页眉/页脚稀疏行）
+    parser.add_argument(
+        "--trim-strict",
+        action="store_true",
+        default=False,
+        help="trim 后置过滤 (v2.1+)：排除稀疏行（页眉/页脚）。"
+        "算法：row ink 阈值 = max(50, max_row_ink × 0.1)，"
+        "低于阈值的行不进 bbox。"
+        "适用于古籍双页扫描：trim 主体过滤后保留的页眉/页脚小字会被排除。"
+        "需配合 --crop trim + --trim-source binarized 生效。",
+    )
+    # v2.1+：adaptive padding 覆盖
+    parser.add_argument(
+        "--adaptive-padding",
+        type=int,
+        default=None,
+        help="trim 输出保留的最小边距像素数（v2.1+；覆盖 adaptive 公式）。"
+        "默认 None = min(5, min(h,w)*0.02)（v1.9 行为，cap 30）。"
+        "设值后 = N 像素（opt-in），用于微调输出松紧度："
+        "设 0=完全贴 mask bbox（最紧）；"
+        "设 30~60=加保护边（防止鱼尾/边栏贴边）。"
+        "需配合 --crop-adaptive auto 生效（fixed 路径不生效）。",
+    )
+    # v2.1+ E2：trim 版框检测（古籍版框页专用）
+    parser.add_argument(
+        "--trim-frame",
+        action="store_true",
+        default=False,
+        help="trim 版框检测（v2.1+ E2）：用 CCA 找最大空心矩形作为裁切边界，"
+        "解决古籍扫描零散噪点导致 trim 留过多白边的问题。"
+        "检测失败 fallback 到原 ink bbox。",
+    )
+    parser.add_argument(
+        "--trim-frame-min-ratio",
+        type=float,
+        default=0.30,
+        help="trim 版框 bbox 占图像面积的最小比例（默认 0.30）。"
+        "太小（如页眉小框）会被滤掉。",
+    )
+    parser.add_argument(
+        "--trim-frame-max-fill",
+        type=float,
+        default=0.15,
+        help="trim 版框 bbox 填充率上限（默认 0.15，空心判定）。"
+        "实心块（fill=1.0）会被滤掉，只留空心框。",
+    )
     # v1.9：图片预处理增强
     parser.add_argument(
         "--preprocess",

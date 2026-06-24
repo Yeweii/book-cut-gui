@@ -58,6 +58,9 @@ def _build_crop_config(args, sample_pages: list) -> object | None:
     - ``--crop-adaptive fixed`` → 返 ``None``（legacy 阈值 240）
     - ``--crop-adaptive auto`` 且 ``--paper-pages >= 1`` → 用前 N 页估 book paper color
     - ``--crop-adaptive auto`` 且 ``--paper-pages 0/1`` → 每页单独估（每次都算）
+
+    v2.1+：``--adaptive-padding N`` 覆盖 adaptive 公式（``None`` → N 像素；默认 ``None`` = 公式）。
+    仅在 auto 路径生效；fixed 路径返 ``None``，padding 由 legacy 硬编码路径决定。
     """
     from book_cut.detect.paper import (
         aggregate_paper_color,
@@ -69,10 +72,17 @@ def _build_crop_config(args, sample_pages: list) -> object | None:
     if crop_adaptive == "fixed":
         return None  # legacy 模式：trim/border 走硬编码 threshold=240
 
+    # v2.1+：解析 --adaptive-padding override
+    padding_override: int | None = getattr(args, "adaptive_padding", None)
+    # argparse type=int → None 仅在 user 未传时（default=None）
+
     paper_pages: int = max(0, getattr(args, "paper_pages", 5))
     if not sample_pages or paper_pages == 0:
         # 无样页可用：返一个默认 config，每页用 240 (等同 legacy)
-        return default_crop_config(paper_color=240.0)
+        cfg = default_crop_config(paper_color=240.0)
+        if padding_override is not None:
+            cfg = _with_padding(cfg, padding_override)
+        return cfg
 
     sampled = sample_pages[:paper_pages]
     colors = [estimate_paper_color(p.image) for p in sampled]
@@ -81,4 +91,19 @@ def _build_crop_config(args, sample_pages: list) -> object | None:
         f"[INFO] 自适应裁切: book paper color = {book_paper:.1f} "
         f"(sampled {len(colors)} pages, raw = {[round(c, 1) for c in colors]})"
     )
-    return default_crop_config(paper_color=book_paper)
+    cfg = default_crop_config(paper_color=book_paper)
+    if padding_override is not None:
+        cfg = _with_padding(cfg, padding_override)
+    return cfg
+
+
+def _with_padding(cfg, padding: int):
+    """构造一个 padding 覆盖后的新 CropConfig（v2.1+ helper）。"""
+    from book_cut.detect.paper import CropConfig
+
+    return CropConfig(
+        paper_color=cfg.paper_color,
+        ink_offset=cfg.ink_offset,
+        padding=padding,
+        min_edge_ink=cfg.min_edge_ink,
+    )

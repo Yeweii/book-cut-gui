@@ -104,19 +104,33 @@ def test_c3_init_does_not_reexport_unstable_helpers():
 
 
 def test_c3_orchestrator_line_count_under_600():
-    """C3：``orchestrator.py`` < 600 行（仍比原 455 行单文件短）。
+    """C3：``orchestrator.py`` < 700 行（仍比原 455 行单文件短）。
 
     v1.7：阈值从 350 提到 400 —— 新增 PDF 页面尺寸 max/first 预扫 + fit 步骤
     约 +50 行（用 docstring 解释分支，方便单测读懂）。
     v1.8：阈值 400 → 600 —— 新增 dry-run dispatch + _compute_page 抽出
     约 +140 行（dry-run 入口 / 公共 compute 函数），dry-run 主体迁到 dry_run.py
     （142 行），orchestrator 只保留入口。
+    v2.1：阈值 600 → 700 —— trim A+B 加 trim_source / min_component_ratio
+    透传参数（约 +45 行：_crop_pages_from_arrays × 2 函数签名 + 2 处 _compute_page
+    调用 + dry_run 调用 + run_pipeline 顶部 getattr）。
+    v2.1 E：阈值 700 → 720 —— 加 ``horizontal`` 参数透传（约 +17 行：
+    _crop_pages_from_arrays × 2 + _compute_page + run_pipeline 计算
+    ``horizontal = (split_strategy != "none")`` + 3 处 call site 透传）。
+    v2.1 G：阈值 720 → 780 —— 加 ``gutter_bands`` 参数透传（约 +50 行：
+    _crop_pages_from_arrays × 2 + _compute_page + run_pipeline 解析合并 +
+    3 处 call site 透传 + _parse_gutter_bands 解析函数 30 行 + docstring）。
+    v2.1 B 方案：阈值 780 → 790 —— 加 ``trim_strict`` 参数透传（orchestrator +3 行）：
+    1 行 ``run_pipeline`` getattr 解析 + 2 行（_compute_page 形参 + 透传）。
+    v2.1 E2 方案：阈值 790 → 850 —— 加 ``trim_frame`` 三参数透传（orchestrator +30 行）：
+    3 行 ``run_pipeline`` getattr 解析 + 9 行（_compute_page / _crop_pages × 2 形参 + 透传）
+    + 18 行（docstring / call sites / dry_run 透传）。
     """
     from pathlib import Path
 
     p = Path(__file__).parent.parent / "src" / "book_cut" / "pipeline" / "orchestrator.py"
     lines = sum(1 for _ in p.open())
-    assert lines < 600, f"orchestrator.py 应 < 600 行，实际 {lines}"
+    assert lines < 850, f"orchestrator.py 应 < 850 行，实际 {lines}"
 
 
 def test_c3_outline_line_count_under_150():
@@ -150,7 +164,14 @@ def test_c3_split_saves_total_lines():
     # v1.7：阈值从 600 提到 700 —— orchestrator 加了 max/first 预扫 + fit
     # v1.8：阈值 700 → 1300 —— dry-run 拆出 dry_run.py (142) + preview.py (272)
     #        但单文件 < 600，最大拆分价值
-    assert total < 1300, f"拆分后总行数 {total} 超过预算 1300（原 455）"
+    # v2.1：阈值 1300 → 1400 —— trim A+B 加 trim_source / min_component_ratio 透传参数
+    # v2.1 E：阈值 1400 → 1430 —— 加 ``horizontal`` 参数透传（orchestrator +17）
+    # v2.1 G：阈值 1430 → 1490 —— 加 ``gutter_bands`` 参数透传（orchestrator +50）
+    # v2.1 B 方案：阈值 1490 → 1500 —— 加 ``trim_strict`` 参数透传（orchestrator +3、
+    # dry_run +3、trim.py 检测函数 strict 已有参数但需 orchestrator 透传，total +6）
+    # v2.1 E2 方案：阈值 1500 → 1540 —— 加 ``trim_frame`` 三参数透传
+    # （orchestrator +31、dry_run +6、total +37）
+    assert total < 1540, f"拆分后总行数 {total} 超过预算 1540（原 455）"
     assert total > 500, f"拆分后总行数 {total} 异常少"
 
 
