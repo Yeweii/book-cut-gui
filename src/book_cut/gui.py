@@ -615,6 +615,14 @@ def run_gui() -> None:
         # v2.2.4 放最底又被 canvas expand 挤出可见区。
         # 单独一行保证固定高、恒可见、最醒目。
 
+        # v2.2.7.2+ 关键：apply_bar 先 pack(side="bottom") 占住底部，
+        # 后面 canvas_frame.pack(side="top", expand=True) 只能拿到中间剩余空间。
+        # Tk pack 语义：top expand 抢占剩余空间，bottom 项要"先到先得"——
+        # 如果 canvas 先 pack(expand=True) 会把 apply_bar 挤掉，bug 复现。
+        apply_bar = ttk.Frame(win)
+        apply_bar.pack(side="bottom", fill="x", padx=8, pady=(4, 8))
+        ttk.Separator(apply_bar, orient="horizontal").pack(side="top", fill="x")
+
         # 初始 profile：从当前 manual_*_var 读（保留用户已设值）
         initial_profile = ManualCropProfile(
             top=manual_top_var.get(),
@@ -626,6 +634,7 @@ def run_gui() -> None:
         )
 
         # Canvas 容器（含 Scrollbar）
+        # v2.2.7.2+ 关键：canvas_frame.pack(expand=True) 在 apply_bar.pack() **之后**调用。
         canvas_frame = ttk.Frame(win)
         canvas_frame.pack(side="top", fill="both", expand=True, padx=8, pady=4)
         y_scroll = ttk.Scrollbar(canvas_frame, orient="vertical")
@@ -671,15 +680,8 @@ def run_gui() -> None:
 
         is_even_var.trace_add("write", _sync_is_even)
 
-        # 应用栏（v2.2.7.1+）：Toplevel 最底部独立一行（side="bottom"）。
-        # v2.2.7 放 toolbar 下方导致按钮在中间（不自然），用户反馈
-        # "需要图片缩小到一定程度才可以显示底部三个按钮"。
-        # 改 side="bottom" 后：toolbar 在顶 / canvas 在中（expand）/
-        # apply_bar 在底，互相独立，任何缩放都恒可见。
-        apply_bar = ttk.Frame(win)
-        apply_bar.pack(side="bottom", fill="x", padx=8, pady=(4, 8))
-        ttk.Separator(apply_bar, orient="horizontal").pack(side="top", fill="x")
-
+        # apply_bar 已在 toolbar 之后先 pack(side="bottom") 占住底部（v2.2.7.2+）。
+        # 这里只加按钮（需要 canvas 已存在）。
         def _on_apply() -> None:
             prof = canvas.get_profile()
             apply_profile_to_vars(

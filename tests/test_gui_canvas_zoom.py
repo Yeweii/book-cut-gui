@@ -409,6 +409,55 @@ def test_apply_bar_packed_at_bottom_v2271():
 
 
 # ----------------------------------------------------------------------------
+# T7e: v2.2.7.2+ apply_bar 必须在 canvas 之前 pack（避免被 expand 抢空间）
+# ----------------------------------------------------------------------------
+
+
+def test_apply_bar_packed_before_canvas_v2272():
+    """v2.2.7.2+ apply_bar.pack() 必须在 canvas_frame.pack() 之前。
+
+    关键修复：v2.2.7.1 只改 side="bottom" 还不够——pack 顺序决定
+    expand 行为。如果 canvas_frame 先 pack(expand=True)，它会抢
+    走所有剩余空间，apply_bar 后 pack 时已被挤掉。
+
+    Tk pack 语义：top expand 抢占剩余空间，bottom 项要"先到先得"。
+    修复：apply_bar 先 pack(side="bottom") 占住底部，canvas 后
+    pack(side="top", expand=True) 只能拿到中间剩余空间。
+    """
+    src = _read(GUI_PATH)
+    m = re.search(
+        r"def _show_sample_crop_window.*?ttk\.Button\(manual_btn_frame",
+        src,
+        flags=re.DOTALL,
+    )
+    body = m.group(0)
+
+    # 在源码里找两个 pack() 调用的字符偏移
+    # 注意：找**不在注释里**的 pack()——comments 含"apply_bar.pack" / "canvas_frame.pack" 字符串
+    apply_bar_pack_pos = body.find("apply_bar.pack(")
+    canvas_frame_pack_pos = body.find("canvas_frame.pack(")
+
+    # 如果第一个 canvas_frame.pack( 出现在 # 注释里，跳到下一个
+    if canvas_frame_pack_pos > 0:
+        # 找 # 注释行
+        line_start = body.rfind("\n", 0, canvas_frame_pack_pos) + 1
+        if body[line_start:canvas_frame_pack_pos].strip().startswith("#"):
+            # 跳过注释行
+            canvas_frame_pack_pos = body.find(
+                "canvas_frame.pack(", canvas_frame_pack_pos + 1
+            )
+
+    assert apply_bar_pack_pos > 0, "apply_bar.pack 没找到"
+    assert canvas_frame_pack_pos > 0, "canvas_frame.pack 没找到"
+
+    assert apply_bar_pack_pos < canvas_frame_pack_pos, (
+        f"v2.2.7.2+：apply_bar.pack() (offset={apply_bar_pack_pos}) "
+        f"必须在 canvas_frame.pack() (offset={canvas_frame_pack_pos}) 之前；"
+        f"否则 canvas expand=True 抢所有空间，apply_bar 被挤掉"
+    )
+
+
+# ----------------------------------------------------------------------------
 # T8: v2.2.5+ 输入路径浏览 — 统一"文件 / 文件夹"对话框
 # ----------------------------------------------------------------------------
 
