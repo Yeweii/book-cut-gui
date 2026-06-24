@@ -45,15 +45,50 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--crop",
-        choices=["none", "trim", "border"],
+        choices=["none", "trim", "border", "manual"],
         default="none",
-        help="单页裁切：none=不裁 / trim=切白边 / border=版框内裁",
+        help="单页裁切：none=不裁 / trim=切白边 / border=版框内裁 / manual=手动裁切（v2.2+，配合 --manual-*）",
     )
     parser.add_argument(
         "--crop-adaptive",
         choices=["auto", "fixed"],
         default="auto",
         help="裁切阈值/边距策略：auto=按纸张色自适应（默认）/ fixed=v1.1 硬编码 240",
+    )
+    # v2.2+：manual crop（用户给 4 个 padding；auto 完全跳过）
+    parser.add_argument(
+        "--manual-odd-padding",
+        type=str,
+        default=None,
+        help="手动裁切 padding（v2.2+）。奇页 4 个 padding："
+        "顺序或 K=V 两种格式，如 '50,40,80,30'（T,B,I,O）或 'T=50,B=40,I=80,O=30'。"
+        "T=顶, B=底, I=中缝侧, O=外侧。"
+        "需配合 --crop manual 生效。",
+    )
+    parser.add_argument(
+        "--manual-mirror-even",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="偶页是否自动 inner↔outer 镜像（v2.2+；默认 True）。"
+        "古籍双页扫描 odd/even 物理镜像，关掉则偶页也用同样 I/O。"
+        "split=none 时此参数无效（无奇偶之分）。"
+        "需配合 --crop manual 生效。",
+    )
+    parser.add_argument(
+        "--manual-preset",
+        type=str,
+        default=None,
+        help="从 JSON preset 文件加载 manual profile（v2.2+）。"
+        "格式见 samples/crop_profiles/*.json。"
+        "若同时给 --manual-odd-padding，preset 优先。"
+        "需配合 --crop manual 生效。",
+    )
+    parser.add_argument(
+        "--manual-save-preset",
+        type=str,
+        default=None,
+        help="将当前 manual 配置（--manual-odd-padding 等）保存为 JSON preset（v2.2+）。"
+        "便于跨书复用。需配合 --crop manual 生效。",
     )
     parser.add_argument(
         "--paper-pages",

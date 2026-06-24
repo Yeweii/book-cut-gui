@@ -180,3 +180,90 @@ def test_cli_runs_no_morph(tmp_path):
     out_files = sorted(out_dir.glob("*.png"))
     # 3 页 × 2 (half 切) = 6 张
     assert len(out_files) == 6
+
+
+# ----------------------------------------------------------------------------
+# v2.2+：manual crop CLI 参数
+# ----------------------------------------------------------------------------
+
+
+def test_cli_crop_manual_in_help():
+    """v2.2+ ``--crop manual`` 出现在 help（--crop choices 包含 manual）。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert result.returncode == 0, f"stderr={result.stderr}"
+    assert "--crop" in result.stdout
+    # "manual" 出现在 --crop choices 列表中
+    # 取 --crop 行后看 "manual" 出现
+    out = result.stdout
+    # 简单判定：choices 列表中含 manual
+    assert "manual" in out
+
+
+def test_cli_manual_odd_padding_flag_accepted():
+    """v2.2+ ``--manual-odd-padding`` flag 存在。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert "--manual-odd-padding" in result.stdout
+
+
+def test_cli_manual_preset_flag_accepted():
+    """v2.2+ ``--manual-preset`` flag 存在。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert "--manual-preset" in result.stdout
+
+
+def test_cli_manual_save_preset_flag_accepted():
+    """v2.2+ ``--manual-save-preset`` flag 存在。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert "--manual-save-preset" in result.stdout
+
+
+def test_cli_manual_mirror_even_flag_accepted():
+    """v2.2+ ``--manual-mirror-even`` flag 存在。"""
+    result = subprocess.run(
+        [sys.executable, "-m", "book_cut.cli", "--help"],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert "--manual-mirror-even" in result.stdout
+
+
+def test_cli_crop_manual_unknown_choice_rejected():
+    """v2.2+ ``--crop invalid_value`` 仍应被 argparse 拒绝。"""
+    result = subprocess.run(
+        [
+            sys.executable, "-m", "book_cut.cli",
+            "--crop", "not_a_real_crop",
+        ],
+        capture_output=True,
+        text=True,
+        timeout=10,
+        env=_ENV,
+    )
+    assert result.returncode != 0
+    assert "invalid choice" in result.stderr or "argparse" in result.stderr

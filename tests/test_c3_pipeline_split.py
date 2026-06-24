@@ -125,12 +125,14 @@ def test_c3_orchestrator_line_count_under_600():
     v2.1 E2 方案：阈值 790 → 850 —— 加 ``trim_frame`` 三参数透传（orchestrator +30 行）：
     3 行 ``run_pipeline`` getattr 解析 + 9 行（_compute_page / _crop_pages × 2 形参 + 透传）
     + 18 行（docstring / call sites / dry_run 透传）。
+    v2.2 manual crop：阈值 850 → 900 —— 加 manual 模式（orchestrator +25 行）：
+    crop_mode=="manual" 分支 + ManualCropProfile 构造 + preset 加载/保存。
     """
     from pathlib import Path
 
     p = Path(__file__).parent.parent / "src" / "book_cut" / "pipeline" / "orchestrator.py"
     lines = sum(1 for _ in p.open())
-    assert lines < 850, f"orchestrator.py 应 < 850 行，实际 {lines}"
+    assert lines < 900, f"orchestrator.py 应 < 900 行，实际 {lines}"
 
 
 def test_c3_outline_line_count_under_150():
@@ -171,7 +173,9 @@ def test_c3_split_saves_total_lines():
     # dry_run +3、trim.py 检测函数 strict 已有参数但需 orchestrator 透传，total +6）
     # v2.1 E2 方案：阈值 1500 → 1540 —— 加 ``trim_frame`` 三参数透传
     # （orchestrator +31、dry_run +6、total +37）
-    assert total < 1540, f"拆分后总行数 {total} 超过预算 1540（原 455）"
+    # v2.2 manual crop：阈值 1540 → 1610 —— orchestrator manual 模式 +25、manual.py 233
+    # （cli.py +35 不在 pipeline 包内不计；detect/manual.py 233 也不在 pipeline 包内）
+    assert total < 1610, f"拆分后总行数 {total} 超过预算 1610（原 455）"
     assert total > 500, f"拆分后总行数 {total} 异常少"
 
 
@@ -378,3 +382,212 @@ def test_split_none_in_gui():
     # 取锚点之后 500 字符（包含整段 for 循环 + options 列表）
     block = text[anchor : anchor + 500]
     assert '("none", "不切分")' in block, f"GUI split radio buttons 应包含 'none'，实际: {block}"
+
+
+# ----------------------------------------------------------------------------
+# v2.2+：--crop manual 端到端
+# ----------------------------------------------------------------------------
+
+
+def _make_args_v22(input_path, output_dir, **overrides):
+    """v2.2+ manual 测试用 args（与 v1.9.2 兼容，新增 manual-* 字段）。"""
+    import argparse
+
+    base = dict(
+        input=str(input_path),
+        output=str(output_dir),
+        split="half",
+        crop="none",
+        binarize="none",
+        deskew=False,
+        auto_single_page=False,
+        page_order="ltr",
+        outline=False,
+        format="png",
+        crop_adaptive="auto",
+        paper_pages=1,
+        paper_deviation=30,
+        half_offset=0,
+        no_morph=False,
+        pdf=False,
+        # v2.2+ manual 字段
+        manual_odd_padding=None,
+        manual_mirror_even=True,
+        manual_preset=None,
+        manual_save_preset=None,
+    )
+    base.update(overrides)
+    return argparse.Namespace(**base)
+
+
+def test_v22_run_pipeline_crop_manual_end_to_end(tmp_path):
+    """v2.2+：``--crop manual --manual-odd-padding "..."`` 端到端跑通。
+
+    合成 1000x800 双页图 → split=half → crop=manual T=50,B=40,I=80,O=30
+    → 输出 2 张子图，每张宽=half_W-110, 高=H-90。
+    """
+    from io import BytesIO
+
+    import pymupdf
+    from PIL import Image
+
+    img = Image.new("L", (1000, 800), 220)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    page.insert_image(page.rect, stream=buf.getvalue())
+    in_pdf = tmp_path / "manual.pdf"
+    doc.save(str(in_pdf))
+    doc.close()
+
+    out_dir = tmp_path / "out"
+    args = _make_args_v22(
+        in_pdf, out_dir,
+        split="half",
+        crop="manual",
+        manual_odd_padding="50,40,80,30",
+        paper_pages=0,
+    )
+
+    from book_cut.pipeline import run_pipeline
+    run_pipeline(args)
+
+    out_files = sorted(out_dir.glob("*.png"))
+    assert len(out_files) == 2
+    # 验证 cropping：loaded size at 300 DPI = 4167×3334
+    # half split → 约 2083/2084（half 取整 ±1）× 3334
+    # manual crop T=50,B=40,I=80,O=30 → 半页宽-110, H-90
+    for f in out_files:
+        with Image.open(f) as im:
+            w, h = im.size
+        # 容许 half 取整 ±1
+        assert w in (1973, 1974), f"file {f.name}: w={w}"
+        assert h == 3244, f"file {f.name}: h={h}"
+
+
+def test_v22_run_pipeline_crop_manual_split_none(tmp_path):
+    """v2.2+：``--split none --crop manual`` 不切分，crop 作用整图。"""
+    from io import BytesIO
+
+    import pymupdf
+    from PIL import Image
+
+    img = Image.new("L", (1000, 800), 220)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    page.insert_image(page.rect, stream=buf.getvalue())
+    in_pdf = tmp_path / "manual_none.pdf"
+    doc.save(str(in_pdf))
+    doc.close()
+
+    out_dir = tmp_path / "out"
+    args = _make_args_v22(
+        in_pdf, out_dir,
+        split="none",
+        crop="manual",
+        manual_odd_padding="50,40,80,30",
+        paper_pages=0,
+    )
+
+    from book_cut.pipeline import run_pipeline
+    run_pipeline(args)
+
+    out_files = sorted(out_dir.glob("*.png"))
+    # split=none → 1 张
+    assert len(out_files) == 1
+    with Image.open(out_files[0]) as im:
+        w, h = im.size
+    # 4167-110=4057, 3334-90=3244
+    assert (w, h) == (4057, 3244), f"got {(w, h)}"
+
+
+def test_v22_run_pipeline_crop_manual_preset_saves(tmp_path):
+    """v2.2+：``--manual-save-preset`` 运行时写 JSON 文件。"""
+    from io import BytesIO
+
+    import pymupdf
+    from PIL import Image
+
+    img = Image.new("L", (1000, 800), 220)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    page.insert_image(page.rect, stream=buf.getvalue())
+    in_pdf = tmp_path / "manual_preset.pdf"
+    doc.save(str(in_pdf))
+    doc.close()
+
+    out_dir = tmp_path / "out"
+    preset_path = tmp_path / "尸子.json"
+    args = _make_args_v22(
+        in_pdf, out_dir,
+        split="none",
+        crop="manual",
+        manual_odd_padding="50,40,80,30",
+        manual_save_preset=str(preset_path),
+        paper_pages=0,
+    )
+
+    from book_cut.pipeline import run_pipeline
+    run_pipeline(args)
+
+    assert preset_path.exists()
+    import json
+    data = json.loads(preset_path.read_text())
+    assert data["top"] == 50
+    assert data["bottom"] == 40
+    assert data["inner"] == 80
+    assert data["outer"] == 30
+    assert data["mirror_even"] is True
+
+
+def test_v22_run_pipeline_crop_manual_preset_loads(tmp_path):
+    """v2.2+：``--manual-preset`` 从 JSON 加载 profile。"""
+    from io import BytesIO
+
+    import pymupdf
+    from PIL import Image
+
+    # 写一个 preset
+    preset_path = tmp_path / "preset.json"
+    preset_path.write_text(
+        '{"version":1,"top":20,"bottom":30,"inner":40,"outer":50,'
+        '"mirror_even":true,"source_size":null,"notes":"test"}'
+    )
+
+    img = Image.new("L", (1000, 800), 220)
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=1000, height=800)
+    page.insert_image(page.rect, stream=buf.getvalue())
+    in_pdf = tmp_path / "load.pdf"
+    doc.save(str(in_pdf))
+    doc.close()
+
+    out_dir = tmp_path / "out"
+    args = _make_args_v22(
+        in_pdf, out_dir,
+        split="none",
+        crop="manual",
+        manual_preset=str(preset_path),
+        paper_pages=0,
+    )
+
+    from book_cut.pipeline import run_pipeline
+    run_pipeline(args)
+
+    out_files = sorted(out_dir.glob("*.png"))
+    assert len(out_files) == 1
+    with Image.open(out_files[0]) as im:
+        w, h = im.size
+    # 4167-40-50=4077, 3334-20-30=3284
+    assert (w, h) == (4077, 3284), f"got {(w, h)}"
