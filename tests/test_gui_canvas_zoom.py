@@ -274,6 +274,52 @@ def test_apply_button_in_sample_window():
 
 
 # ----------------------------------------------------------------------------
+# T7b: v2.2.6+ "应用" 按钮必须在顶部 toolbar（保证恒可见）
+# ----------------------------------------------------------------------------
+
+
+def test_apply_button_in_top_toolbar_v226():
+    """v2.2.6+ '应用' 按钮必须在顶部 toolbar，永远可见。
+
+    v2.2.4 放到底部 btn_frame，但用户截图（2026-06-25）反馈仍看不到：
+    标题 + toolbar + canvas 都显示了，但底部按钮区消失了。
+    推测：btn_frame.pack(side="bottom") + canvas_frame.pack(expand=True) 在
+    1000x860 视口里与任务栏 / Dock 竞争被挤出可见区。
+
+    修复：把"应用"移到顶部 toolbar（与缩放按钮同行），右侧 pack，
+    保证不论窗口怎么缩放都在视野里。
+    """
+    src = _read(GUI_PATH)
+    m = re.search(
+        r"def _show_sample_crop_window.*?ttk\.Button\(manual_btn_frame",
+        src,
+        flags=re.DOTALL,
+    )
+    body = m.group(0)
+
+    # 1) toolbar 里必须有"应用"按钮（ttk.Button(toolbar, text=..."应用"...)）
+    has_apply_in_toolbar = re.search(
+        r'ttk\.Button\(\s*toolbar[^)]*text\s*=\s*"[^"]*应用', body, flags=re.DOTALL
+    )
+    assert has_apply_in_toolbar, (
+        "v2.2.6+ 修复：'应用'按钮必须在顶部 toolbar（v2.2.4 放底部被画布挤掉）"
+    )
+
+    # 2) toolbar 里的"应用"按钮必须 pack 到右侧（不会被前面控件挤掉）
+    # 支持多行写法（ttk.Button(\n toolbar, text="应用"...\n).pack(...)）
+    apply_btn_block = re.search(
+        r'ttk\.Button\(\s*toolbar.*?"应用.*?\)\s*\.pack\(([^)]+)\)',
+        body,
+        flags=re.DOTALL,
+    )
+    assert apply_btn_block is not None, "顶部'应用'按钮缺少 .pack() 调用"
+    pack_args = apply_btn_block.group(1)
+    assert 'side="right"' in pack_args, (
+        f"顶部'应用'按钮应 pack(side='right') 避免被前面控件挤掉；当前: {pack_args!r}"
+    )
+
+
+# ----------------------------------------------------------------------------
 # T8: v2.2.5+ 输入路径浏览 — 统一"文件 / 文件夹"对话框
 # ----------------------------------------------------------------------------
 

@@ -610,6 +610,17 @@ def run_gui() -> None:
             side="left", padx=(4, 0)
         )
 
+        # v2.2.6+ 把"应用"按钮搬到顶部 toolbar（v2.2.4 放底部 btn_frame
+        # 在 1000x860 视口里被画布/任务栏挤出可见区，用户截图反馈看不到）。
+        # 用 Separator + 较宽按钮让"应用"在工具栏右侧最醒目位置，恒可见。
+        ttk.Separator(toolbar, orient="vertical").pack(
+            side="right", fill="y", padx=(16, 4)
+        )
+        # lambda 推迟 _on_apply 解析（_on_apply 在函数下方定义）
+        ttk.Button(
+            toolbar, text="应用", width=8, command=lambda: _on_apply()
+        ).pack(side="right", padx=4)
+
         # 初始 profile：从当前 manual_*_var 读（保留用户已设值）
         initial_profile = ManualCropProfile(
             top=manual_top_var.get(),
@@ -687,9 +698,8 @@ def run_gui() -> None:
 
         ttk.Button(btn_frame, text="重置", command=canvas.reset).pack(side="left", padx=4)
         ttk.Button(btn_frame, text="取消", command=win.destroy).pack(side="right", padx=4)
-        ttk.Button(btn_frame, text="应用", command=_on_apply).pack(
-            side="right", padx=4
-        )
+        # v2.2.6+ "应用" 按钮已搬到顶部 toolbar（更醒目 + 恒可见），
+        # 底部 btn_frame 只留"重置"和"取消"。
 
         # 关窗时也清回调（避免 trace 引用悬空）
         win.bind(
