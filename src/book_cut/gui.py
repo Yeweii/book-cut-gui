@@ -610,16 +610,10 @@ def run_gui() -> None:
             side="left", padx=(4, 0)
         )
 
-        # v2.2.6+ 把"应用"按钮搬到顶部 toolbar（v2.2.4 放底部 btn_frame
-        # 在 1000x860 视口里被画布/任务栏挤出可见区，用户截图反馈看不到）。
-        # 用 Separator + 较宽按钮让"应用"在工具栏右侧最醒目位置，恒可见。
-        ttk.Separator(toolbar, orient="vertical").pack(
-            side="right", fill="y", padx=(16, 4)
-        )
-        # lambda 推迟 _on_apply 解析（_on_apply 在函数下方定义）
-        ttk.Button(
-            toolbar, text="应用", width=8, command=lambda: _on_apply()
-        ).pack(side="right", padx=4)
+        # v2.2.7+ "应用" 按钮单独一行（apply_bar），紧贴 toolbar 下方。
+        # v2.2.6 把"应用"塞进 toolbar 右侧被挤成 1x1（中文 radio 占满空间）；
+        # v2.2.4 放最底又被 canvas expand 挤出可见区。
+        # 单独一行保证固定高、恒可见、最醒目。
 
         # 初始 profile：从当前 manual_*_var 读（保留用户已设值）
         initial_profile = ManualCropProfile(
@@ -677,12 +671,11 @@ def run_gui() -> None:
 
         is_even_var.trace_add("write", _sync_is_even)
 
-        # 底部按钮（v2.2.4+ 加 Separator 让"应用"更醒目）
-        ttk.Separator(win, orient="horizontal").pack(
-            side="bottom", fill="x", padx=8, pady=(4, 0)
-        )
-        btn_frame = ttk.Frame(win)
-        btn_frame.pack(side="bottom", fill="x", padx=8, pady=8)
+        # 应用栏（v2.2.7+）：紧贴 toolbar 下方，独立一行。
+        # 固定高度 ~50px（Separator + button row），不会被 canvas expand 挤掉。
+        apply_bar = ttk.Frame(win)
+        apply_bar.pack(side="top", fill="x", padx=8, pady=(0, 4))
+        ttk.Separator(apply_bar, orient="horizontal").pack(side="top", fill="x")
 
         def _on_apply() -> None:
             prof = canvas.get_profile()
@@ -696,10 +689,14 @@ def run_gui() -> None:
             )
             win.destroy()
 
-        ttk.Button(btn_frame, text="重置", command=canvas.reset).pack(side="left", padx=4)
-        ttk.Button(btn_frame, text="取消", command=win.destroy).pack(side="right", padx=4)
-        # v2.2.6+ "应用" 按钮已搬到顶部 toolbar（更醒目 + 恒可见），
-        # 底部 btn_frame 只留"重置"和"取消"。
+        apply_row = ttk.Frame(apply_bar)
+        apply_row.pack(side="top", fill="x", pady=6)
+        ttk.Button(apply_row, text="重置", command=canvas.reset).pack(side="left", padx=4)
+        ttk.Button(apply_row, text="取消", command=win.destroy).pack(side="right", padx=4)
+        # 应用按钮：右侧 + 加宽 + 加 padding，最醒目
+        ttk.Button(
+            apply_row, text="✓ 应用", width=10, command=lambda: _on_apply()
+        ).pack(side="right", padx=(4, 8), pady=2)
 
         # 关窗时也清回调（避免 trace 引用悬空）
         win.bind(

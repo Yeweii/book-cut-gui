@@ -259,7 +259,7 @@ def test_apply_button_in_sample_window():
     """_show_sample_crop_window 必须有"应用"按钮（v2.2.4+ 必填项）。
 
     v2.2.3 反馈：用户没看到底部"应用"按钮，怀疑被工具栏挤掉或裁切。
-    本测试静态分析源码中必须存在 "应用" 按钮。
+    本测试静态分析源码中必须存在 "应用" 按钮（v2.2.7+ 接受带前缀如 "✓ 应用"）。
     """
     src = _read(GUI_PATH)
     m = re.search(
@@ -268,26 +268,22 @@ def test_apply_button_in_sample_window():
         flags=re.DOTALL,
     )
     body = m.group(0)
-    # "应用" 按钮：在 btn_frame 里，command 调 _on_apply
-    assert 'text="应用"' in body, "底部缺少'应用'按钮"
+    # "应用" 按钮：text 含"应用"（v2.2.7+ 可能是 "✓ 应用" / "应用" 等）
+    assert re.search(r'text\s*=\s*"[^"]*应用', body), "缺少'应用'按钮"
     assert "_on_apply" in body, "应用按钮缺少 _on_apply 回调"
 
 
 # ----------------------------------------------------------------------------
-# T7b: v2.2.6+ "应用" 按钮必须在顶部 toolbar（保证恒可见）
+# T7b: v2.2.7+ "应用" 按钮必须在 apply_row（独立行，恒可见）
 # ----------------------------------------------------------------------------
 
 
-def test_apply_button_in_top_toolbar_v226():
-    """v2.2.6+ '应用' 按钮必须在顶部 toolbar，永远可见。
+def test_apply_button_in_apply_row_v227():
+    """v2.2.7+ '应用' 按钮必须在 apply_row（toolbar 下方独立行），永远可见。
 
-    v2.2.4 放到底部 btn_frame，但用户截图（2026-06-25）反馈仍看不到：
-    标题 + toolbar + canvas 都显示了，但底部按钮区消失了。
-    推测：btn_frame.pack(side="bottom") + canvas_frame.pack(expand=True) 在
-    1000x860 视口里与任务栏 / Dock 竞争被挤出可见区。
-
-    修复：把"应用"移到顶部 toolbar（与缩放按钮同行），右侧 pack，
-    保证不论窗口怎么缩放都在视野里。
+    v2.2.4 放底部 btn_frame → 被 canvas 挤出可见区（用户截图）
+    v2.2.6 放 toolbar 右侧 → 被中文 radio 挤成 1x1 不可见（实测 winfo_width=1）
+    v2.2.7 单独一行 apply_row，紧贴 toolbar 下方，固定高，恒可见
     """
     src = _read(GUI_PATH)
     m = re.search(
@@ -297,25 +293,78 @@ def test_apply_button_in_top_toolbar_v226():
     )
     body = m.group(0)
 
-    # 1) toolbar 里必须有"应用"按钮（ttk.Button(toolbar, text=..."应用"...)）
-    has_apply_in_toolbar = re.search(
-        r'ttk\.Button\(\s*toolbar[^)]*text\s*=\s*"[^"]*应用', body, flags=re.DOTALL
+    # 1) apply_row 里必须有"应用"按钮（ttk.Button(apply_row, text=..."应用"...)）
+    has_apply_in_row = re.search(
+        r'ttk\.Button\(\s*apply_row[^)]*text\s*=\s*"[^"]*应用', body, flags=re.DOTALL
     )
-    assert has_apply_in_toolbar, (
-        "v2.2.6+ 修复：'应用'按钮必须在顶部 toolbar（v2.2.4 放底部被画布挤掉）"
+    assert has_apply_in_row, (
+        "v2.2.7+ 修复：'应用'按钮必须在 apply_row（独立行，恒可见）"
     )
 
-    # 2) toolbar 里的"应用"按钮必须 pack 到右侧（不会被前面控件挤掉）
-    # 支持多行写法（ttk.Button(\n toolbar, text="应用"...\n).pack(...)）
+    # 2) "应用"按钮必须 pack(side="right") 靠右显示
     apply_btn_block = re.search(
-        r'ttk\.Button\(\s*toolbar.*?"应用.*?\)\s*\.pack\(([^)]+)\)',
+        r'ttk\.Button\(\s*apply_row.*?应用.*?\)\s*\.pack\(([^)]+)\)',
         body,
         flags=re.DOTALL,
     )
-    assert apply_btn_block is not None, "顶部'应用'按钮缺少 .pack() 调用"
+    assert apply_btn_block is not None, "apply_row'应用'按钮缺少 .pack() 调用"
     pack_args = apply_btn_block.group(1)
     assert 'side="right"' in pack_args, (
-        f"顶部'应用'按钮应 pack(side='right') 避免被前面控件挤掉；当前: {pack_args!r}"
+        f"'应用'按钮应 pack(side='right') 靠右；当前: {pack_args!r}"
+    )
+
+    # 3) 不能再把'应用'塞进 toolbar（v2.2.6 教训：被挤成 1x1）
+    has_apply_in_toolbar = re.search(
+        r'ttk\.Button\(\s*toolbar[^)]*text\s*=\s*"[^"]*应用', body, flags=re.DOTALL
+    )
+    assert not has_apply_in_toolbar, (
+        "v2.2.7+：'应用'按钮禁止放 toolbar（v2.2.6 教训：被中文 radio 挤成 1x1）"
+    )
+
+
+# ----------------------------------------------------------------------------
+# T7c: v2.2.7+ apply_row 独立行（不被 toolbar 挤压）
+# ----------------------------------------------------------------------------
+
+
+def test_apply_row_is_independent_of_toolbar():
+    """v2.2.7+ apply_row 必须是独立 Frame（不再被 toolbar 挤压）。
+
+    v2.2.6 教训：把"应用"塞进 toolbar 右侧，pack 后 winfo_width=1
+    （中文 radio 占满 984px 空间，右侧按钮被挤成 1x1 不可见）。
+
+    v2.2.7 修复：apply_row 独立 Frame，紧贴 toolbar 下方，固定高
+    （Separator + 按钮行约 50px），不受 toolbar 控件数量影响。
+
+    本测试用 pack_info 验证 apply_row 不在 toolbar 内。
+    """
+    src = _read(GUI_PATH)
+    m = re.search(
+        r"def _show_sample_crop_window.*?ttk\.Button\(manual_btn_frame",
+        src,
+        flags=re.DOTALL,
+    )
+    body = m.group(0)
+
+    # 1) apply_row 必须用独立 Frame（"apply_row = ttk.Frame(apply_bar)"）
+    has_apply_row = re.search(
+        r"apply_row\s*=\s*ttk\.Frame\(", body
+    )
+    assert has_apply_row, (
+        "v2.2.7+：apply_row 必须是独立 Frame（避免被 toolbar 挤压）"
+    )
+
+    # 2) apply_row 必须 pack(side="top", fill="x") 而不是 expand
+    row_pack = re.search(
+        r"apply_row\.pack\(\s*([^)]+)\s*\)", body
+    )
+    assert row_pack is not None, "apply_row 缺少 .pack() 调用"
+    pack_args = row_pack.group(1)
+    assert 'side="top"' in pack_args, (
+        f"apply_row 应 pack(side='top') 在 toolbar 下方；当前: {pack_args!r}"
+    )
+    assert "expand=" not in pack_args or "expand=0" in pack_args or "expand=False" in pack_args, (
+        f"apply_row 不应 expand（保证固定高，不被 canvas 抢空间）；当前: {pack_args!r}"
     )
 
 
