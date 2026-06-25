@@ -49,7 +49,12 @@ def test_cropcanvas_set_scale_changes_dimensions():
         pytest.skip("无 Tk 显示环境")
 
     img = Image.new("L", (1000, 800), 255)
-    profile = ManualCropProfile(top=10, bottom=10, inner=10, outer=10)
+    from book_cut.detect.manual import PageCropProfile
+
+    profile = ManualCropProfile(
+        odd_page=PageCropProfile(top=10, bottom=10, inner=10, outer=10),
+        even_page=PageCropProfile(top=10, bottom=10, inner=10, outer=10),
+    )
     canvas = CropCanvas(root, img, profile=profile, max_display=2000)
     canvas.set_scale(0.5)
     # 0.5 × 1000 = 500, 0.5 × 800 = 400
@@ -77,7 +82,7 @@ def test_cropcanvas_fit_to_size_computes_best_scale():
 
     from PIL import Image
 
-    from book_cut.detect.manual import ManualCropProfile
+    from book_cut.detect.manual import ManualCropProfile, PageCropProfile
     from book_cut.gui_canvas import CropCanvas
 
     try:
@@ -86,7 +91,10 @@ def test_cropcanvas_fit_to_size_computes_best_scale():
         pytest.skip("无 Tk 显示环境")
 
     img = Image.new("L", (1000, 800), 255)
-    profile = ManualCropProfile(top=10, bottom=10, inner=10, outer=10)
+    profile = ManualCropProfile(
+        odd_page=PageCropProfile(top=10, bottom=10, inner=10, outer=10),
+        even_page=PageCropProfile(top=10, bottom=10, inner=10, outer=10),
+    )
     canvas = CropCanvas(root, img, profile=profile, max_display=2000)
 
     # max_w=400 → scale_w=0.4；max_h=300 → scale_h=0.375；min=0.375
@@ -107,7 +115,7 @@ def test_cropcanvas_fit_to_size_caps_at_1():
 
     from PIL import Image
 
-    from book_cut.detect.manual import ManualCropProfile
+    from book_cut.detect.manual import ManualCropProfile, PageCropProfile
     from book_cut.gui_canvas import CropCanvas
 
     try:
@@ -117,7 +125,10 @@ def test_cropcanvas_fit_to_size_caps_at_1():
 
     img = Image.new("L", (100, 100), 255)
     canvas = CropCanvas(
-        root, img, profile=ManualCropProfile(top=1, bottom=1, inner=1, outer=1), max_display=2000
+        root, img, profile=ManualCropProfile(
+            odd_page=PageCropProfile(top=1, bottom=1, inner=1, outer=1),
+            even_page=PageCropProfile(top=1, bottom=1, inner=1, outer=1),
+        ), max_display=2000
     )
     canvas.fit_to_size(max_w=2000, max_h=2000)
     # 100×100 不会放大，scale 仍是 1.0
@@ -135,7 +146,7 @@ def test_cropcanvas_fit_to_size_invalid_raises():
 
     from PIL import Image
 
-    from book_cut.detect.manual import ManualCropProfile
+    from book_cut.detect.manual import ManualCropProfile, PageCropProfile
     from book_cut.gui_canvas import CropCanvas
 
     try:
@@ -144,7 +155,10 @@ def test_cropcanvas_fit_to_size_invalid_raises():
         pytest.skip("无 Tk 显示环境")
 
     canvas = CropCanvas(
-        root, Image.new("L", (10, 10), 255), profile=ManualCropProfile(top=0, bottom=0, inner=0, outer=0)
+        root, Image.new("L", (10, 10), 255), profile=ManualCropProfile(
+            odd_page=PageCropProfile(top=0, bottom=0, inner=0, outer=0),
+            even_page=PageCropProfile(top=0, bottom=0, inner=0, outer=0),
+        )
     )
     with pytest.raises(ValueError, match="max_w"):
         canvas.fit_to_size(max_w=0, max_h=10)
@@ -166,7 +180,7 @@ def test_cropcanvas_zoom_in_out():
 
     from PIL import Image
 
-    from book_cut.detect.manual import ManualCropProfile
+    from book_cut.detect.manual import ManualCropProfile, PageCropProfile
     from book_cut.gui_canvas import CropCanvas
 
     try:
@@ -177,7 +191,10 @@ def test_cropcanvas_zoom_in_out():
     canvas = CropCanvas(
         root,
         Image.new("L", (1000, 1000), 255),
-        profile=ManualCropProfile(top=0, bottom=0, inner=0, outer=0),
+        profile=ManualCropProfile(
+            odd_page=PageCropProfile(top=0, bottom=0, inner=0, outer=0),
+            even_page=PageCropProfile(top=0, bottom=0, inner=0, outer=0),
+        ),
     )
     initial = canvas._scale
     canvas.zoom_in(factor=1.25)

@@ -169,14 +169,14 @@ def test_sample_page_supports_image_filetypes():
 
 
 def test_apply_profile_to_vars():
-    """apply_profile_to_vars(profile, vars) 把 profile 的 4 个 padding 写到 IntVar。
+    """apply_profile_to_vars(profile, vars, is_even) 把当前侧的 4 padding 写到 IntVar。
 
-    v2.2.2+ 抽出来的纯函数：拖框 Toplevel 应用按钮调它把新 padding 同步到主窗口。
+    v2.2.2+ 抽出来的纯函数。v2.3+ 改为按 ``is_even`` 选 ``odd_page`` / ``even_page`` 写入。
     单元测试不依赖 Tk：tk.IntVar 在 mock 模式下也能 set/get。
     """
     import tkinter as tk
 
-    from book_cut.detect.manual import ManualCropProfile
+    from book_cut.detect.manual import ManualCropProfile, PageCropProfile
 
     try:
         root = tk.Tk()
@@ -189,15 +189,24 @@ def test_apply_profile_to_vars():
     bottom = tk.IntVar(value=0)
     inner = tk.IntVar(value=0)
     outer = tk.IntVar(value=0)
-    mirror = tk.BooleanVar(value=True)
 
-    prof = ManualCropProfile(top=50, bottom=40, inner=80, outer=30, mirror_even=False)
-    apply_profile_to_vars(prof, top, bottom, inner, outer, mirror)
+    prof = ManualCropProfile(
+        odd_page=PageCropProfile(top=11, bottom=22, inner=33, outer=44),
+        even_page=PageCropProfile(top=55, bottom=66, inner=77, outer=88),
+    )
 
-    assert top.get() == 50
-    assert bottom.get() == 40
-    assert inner.get() == 80
-    assert outer.get() == 30
-    assert mirror.get() is False  # mirror_even 也会同步
+    # is_even=False → 写 odd_page
+    apply_profile_to_vars(prof, top, bottom, inner, outer, is_even=False)
+    assert top.get() == 11
+    assert bottom.get() == 22
+    assert inner.get() == 33
+    assert outer.get() == 44
+
+    # is_even=True → 写 even_page
+    apply_profile_to_vars(prof, top, bottom, inner, outer, is_even=True)
+    assert top.get() == 55
+    assert bottom.get() == 66
+    assert inner.get() == 77
+    assert outer.get() == 88
 
     root.destroy()

@@ -1,0 +1,17 @@
+{
+  "version": 2,
+  "odd_page": {
+    "top": 50,
+    "bottom": 40,
+    "inner": 80,
+    "outer": 30
+  },
+  "even_page": {
+    "top": 50,
+    "bottom": 40,
+    "inner": 30,
+    "outer": 80
+  },
+  "source_size": [4947, 7610],
+  "notes": "v2.3+ 示例：奇偶页独立 padding。中缝鱼尾不对称场景。旧 v1 + mirror_even=true 也能等价表达，但 v2.3+ 推荐用独立 profile 准确表达古籍非对称版心。"
+}

@@ -52,16 +52,15 @@ _DRAG_BR = 9               # 右下角
 
 
 class CropCanvas(tk.Canvas):  # type: ignore[misc, valid-type]
-    """可拖拽裁切框 Canvas（v2.2+）。
+    """可拖拽裁切框 Canvas（v2.3+）。
 
     Args:
         parent: 父 widget。
         image: 原始图像（PIL.Image）。
-        profile: 初始 ManualCropProfile。
+        profile: 初始 ManualCropProfile（v2.3+ 含 odd_page + even_page）。
         is_even: 当前显示的是否偶页（影响内/外语义）。
         on_change: profile 变化时回调（接收新 profile）。
         max_display: 显示区域最大边长（像素）；原图按此 downscale。
-        mirror_even: 偶页是否镜像（与 profile.mirror_even 一致）。
     """
 
     MIN_RECT_SIZE = 100  # 最小矩形边长（image 像素）
@@ -74,7 +73,6 @@ class CropCanvas(tk.Canvas):  # type: ignore[misc, valid-type]
         is_even: bool = False,
         on_change: Callable[[ManualCropProfile], None] | None = None,
         max_display: int = 1200,
-        mirror_even: bool = True,
         **kwargs,
     ) -> None:
         self._raw_image = image
@@ -95,9 +93,8 @@ class CropCanvas(tk.Canvas):  # type: ignore[misc, valid-type]
             **kwargs,
         )
 
-        # 状态
+        # 状态（v2.3+：移除 _mirror_even；偶页方向由 profile.even_page 决定）
         self._is_even = is_even
-        self._mirror_even = mirror_even
         self._on_change = on_change
         self._drag_mode: int = _DRAG_NONE
         self._drag_anchor: tuple[int, int] = (0, 0)
@@ -110,6 +107,9 @@ class CropCanvas(tk.Canvas):  # type: ignore[misc, valid-type]
         # 渲染图片
         self._draw_image()
 
+        # v2.3+：保存原始 profile snapshot 以便 get_profile 保留另一侧 PageCropProfile
+        self._profile_snapshot = profile
+
         # 从 profile 计算初始 rect
         self.set_profile(profile)
 
@@ -118,10 +118,15 @@ class CropCanvas(tk.Canvas):  # type: ignore[misc, valid-type]
     # ------------------------------------------------------------------
 
     def set_profile(self, profile: ManualCropProfile) -> None:
-        """设置 profile，重绘矩形。"""
-        t, b, i, o = profile.top, profile.bottom, profile.inner, profile.outer
+        """设置 profile，重绘矩形（v2.3+）。"""
+        self._profile_snapshot = profile
+        p = profile.even_page if self._is_even else profile.odd_page
+        t, b, i, o = p.top, p.bottom, p.inner, p.outer
         W, H = self._raw_w, self._raw_h
-        if self._is_even and self._mirror_even:
+        # v2.3+：奇/偶页 inner/outer 语义不同
+        #   奇页：inner = 左边留白 = L；outer = 右边留白 = W - R
+        #   偶页：inner = 右边留白 = W - R；outer = 左边留白 = L
+        if self._is_even:
             L, R = o, W - i
         else:
             L, R = i, W - o
@@ -135,22 +140,28 @@ class CropCanvas(tk.Canvas):  # type: ignore[misc, valid-type]
         self._render_rect()
 
     def get_profile(self) -> ManualCropProfile:
-        """从当前矩形反算 ManualCropProfile。"""
+        """从当前矩形反算 ManualCropProfile（v2.3+：返回双 PageCropProfile）。"""
         L, T, R, B = self._rect
-        t, b, i, o = padding_from_rect(
+        p = padding_from_rect(
             (L, T, R, B),
             (self._raw_w, self._raw_h),
             is_even=self._is_even,
-            mirror_even=self._mirror_even,
         )
-        return ManualCropProfile(
-            top=t,
-            bottom=b,
-            inner=i,
-            outer=o,
-            mirror_even=self._mirror_even,
+        # 当前 is_even 决定更新 odd 还是 even；另一边保留 snapshot 原值
+        snap = self._profile_snapshot
+        if self._is_even:
+            new_even = p
+            new_odd = snap.odd_page
+        else:
+            new_odd = p
+            new_even = snap.even_page
+        # 更新 snapshot（让下一次 get_profile 仍能看到本侧新值）
+        self._profile_snapshot = ManualCropProfile(
+            odd_page=new_odd,
+            even_page=new_even,
             source_size=(self._raw_w, self._raw_h),
         )
+        return self._profile_snapshot
 
     def reset(self) -> None:
         """双击重置：回到全图。"""
@@ -159,7 +170,7 @@ class CropCanvas(tk.Canvas):  # type: ignore[misc, valid-type]
         self._notify_change()
 
     def set_is_even(self, is_even: bool) -> None:
-        """切换奇/偶页（同时按 mirror_even 重新计算 rect）。"""
+        """切换奇/偶页（v2.3+：用对应 PageCropProfile 重新计算 rect）。"""
         self._is_even = is_even
         # 重新用当前 padding 应用新方向
         prof = self.get_profile()
