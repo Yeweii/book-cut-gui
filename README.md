@@ -9,6 +9,7 @@
   - `gutter`（默认）—— 列投影找中缝，最白连续段中心，鲁棒性最好
   - `border` —— Hough 直线检测版框，按版框中心切分
   - `half` —— 固定对半切（支持 `--half-offset N` 微调）
+  - `manual`（v2.4+）—— 用户画一条切分线，整本书复用（古籍装订物理位置固定）
 - **可选处理**：
   - 倾斜校正 `--deskew`（Hough 法默认，找不到时回退投影法）
   - 单页裁切 `--crop {none,trim,border}`：trim=白边裁切，border=版框内裁（找不到版框自动回退 trim）
@@ -59,7 +60,10 @@ python -m book_cut --gui
 | `-i / --input` | 必填 | 输入：PDF / 图片 / 文件夹 |
 | `-o / --output` | 必填 | 输出目录 |
 | `--deskew` | 关 | 倾斜校正（Hough，fallback 投影） |
-| `--split` | `gutter` | `half` / `gutter` / `border` |
+| `--split` | `gutter` | `half` / `gutter` / `border` / `manual`（v2.4+）/ `none` |
+| `--manual-split-x` | 无 | v2.4+：手动切分 x 坐标（原图坐标系，1 ≤ x < W）。需配合 `--split manual` |
+| `--manual-split-preset` | 无 | v2.4+：手动切分 JSON preset 路径（v1 schema），与 `--manual-split-x` 同给时 preset 优先 |
+| `--pick-split-line` | 关 | v2.4+ 子命令：弹 GUI 选切分线，写入 JSON 到 `-o`。用法：`python -m book_cut --pick-split-line -i book.pdf -o preset.json` |
 | `--crop` | `none` | `none` / `trim`（白边）/ `border`（版框内裁） |
 | `--binarize` | `none` | `none` / `otsu` / `adaptive` / `sauvola` |
 | `--binary-mode` | `1bit` | v2.0+：二值化输出位深 `1bit`（1-bit 调色板，PNG/PDF 体积 ~30% 缩）/ `8bit`（8-bit L，向后兼容）。可被 `BOOKCUT_BINARY_MODE` 环境变量覆盖 |
@@ -289,6 +293,30 @@ python -m book_cut -i cover.jpg -o ./out --split half --preprocess "gamma=0.7"
 ### GUI
 
 在"输出格式"行下方加 **图像增强** 控件：preset combobox（none / sharpen / denoise / clahe / ... 7 种 + custom）+ 质量 combobox（fast/balanced/best）+ 自定义链 entry（仅 custom 时 enable）。
+
+## 手动切分线（v2.4+）
+
+`--split manual` 适用于自动切分（gutter / border）失败的古籍扫描：书脊歪斜、扫描偏色导致中缝最白段不明显、版框断裂等场景。
+
+**两阶段用法**：
+
+```bash
+# 第一步：弹 GUI 选切分线 → 保存为 preset
+python -m book_cut --pick-split-line -i book.pdf -o preset.json
+# GUI 内拖一条竖直线到中缝位置，点「确定」即写入 preset.json
+
+# 第二步：用 preset 跑流水线
+python -m book_cut -i book.pdf -o ./out --split manual --manual-split-preset preset.json
+# 或直接给 x（无 preset）：
+python -m book_cut -i book.pdf -o ./out --split manual --manual-split-x 970
+```
+
+**关键约束**：
+- `--deskew` 状态必须与创建 preset 时一致；不一致会触发 **MS009** 错误（preset 在 post-deskew 坐标系下，--deskew 切换会改变坐标系 → 切分 x 偏移）
+- `--split manual` 单页检测时跳过（warn MS007；古籍单页本身就一页，不需要切）
+- GUI 主窗切到「手动（画线）」radio 时，「选切分线...」按钮自动启用
+
+详见 `samples/crop_profiles/v2_manual_split_example.json`。
 
 ## 项目结构
 

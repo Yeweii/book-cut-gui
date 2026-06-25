@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import logging
+
 import numpy as np
 import pytest
 
@@ -10,7 +11,6 @@ from book_cut.split.manual import (
     ManualSplitProfile,
     apply_manual_split,
 )
-
 
 # --- T1: to_json → from_json round-trip ---
 
@@ -127,6 +127,7 @@ def test_t9_manual_split_missing_profile_raises():
 def test_t10_compute_page_manual_split():
     """T10: _compute_page 用 manual + valid profile → 2 sub-arrays。"""
     from unittest.mock import MagicMock
+
     from book_cut.pipeline.orchestrator import _compute_page
 
     fake_page = MagicMock()

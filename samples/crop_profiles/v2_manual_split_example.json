@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "name": "尸子卷_浙江书局_光绪三年刊_v2_手动切分线",
+  "split_x": 970,
+  "source_size": [1940, 2776],
+  "page": 1,
+  "deskew_applied": false,
+  "notes": "v2.4 示例：用 --pick-split-line 在尸子卷首页画出中缝位置。1940 宽 / 970 为中点附近。--deskew 与创建 preset 时必须一致（MS009）。"
+}

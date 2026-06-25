@@ -8,7 +8,9 @@ import queue
 import re
 import subprocess
 import sys
+import tempfile
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
@@ -251,6 +253,68 @@ def apply_profile_to_vars(
 # ----------------------------------------------------------------------------
 
 
+def run_pick_split_line(args) -> int:
+    """``--pick-split-line`` 子命令入口（v2.4+）。
+
+    启动一个独立的 Tk root（不用主窗的全套 UI），只弹 ``SplitLinePicker``。
+    关闭时若用户确认，则 ``args.output`` 已经是 ``ManualSplitProfile.to_json()`` 的内容
+    （由 ``SplitLinePicker`` 在确认时写入）。
+
+    Returns:
+        0 = 已选（output 写入 JSON）；1 = 取消。
+    """
+    from book_cut.io.loader import load_pages
+    from book_cut.split.picker_ui import SplitLinePicker
+
+    input_path = Path(args.input)
+    if not input_path.exists():
+        print(f"[ERROR] 输入路径不存在: {input_path}", file=sys.stderr)
+        return 1
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        pages = list(load_pages(input_path))
+    except Exception as e:  # noqa: BLE001
+        print(f"[ERROR] 加载首页失败: {e}", file=sys.stderr)
+        return 1
+    if not pages:
+        print("[ERROR] 输入为空（无法获取代表页）", file=sys.stderr)
+        return 1
+    first_page = pages[0]
+    img = first_page.image
+    if img.mode != "L":
+        img = img.convert("L")
+
+    root = tk.Tk()
+    root.withdraw()  # 隐藏主窗（我们只用 Toplevel）
+
+    result_holder = {"profile": None}
+
+    def _on_confirm(profile) -> None:
+        result_holder["profile"] = profile
+        output_path.write_text(profile.to_json(), encoding="utf-8")
+        print(
+            f"[OK] split_x={profile.split_x} "
+            f"source_size={profile.source_size} "
+            f"deskew_applied={profile.deskew_applied}"
+        )
+        print(f"[OK] 已写入: {output_path}")
+
+    picker = SplitLinePicker(
+        parent=root,
+        image=img,
+        image_path=input_path,
+        deskew_applied=bool(args.deskew),
+        output_path=output_path,
+        on_confirm=_on_confirm,
+    )
+    # 等弹窗关闭
+    picker.wait_window()
+    root.destroy()
+    return 0 if result_holder["profile"] is not None else 1
+
+
 def run_gui() -> None:
     root = tk.Tk()
     root.title(f"古籍双页切分工具 v{__version__}")
@@ -452,11 +516,28 @@ def run_gui() -> None:
     split_frame = ttk.Frame(inner_frame)
     split_frame.grid(row=4, column=1, sticky="w", **pad)
     for i, (val, label) in enumerate(
-        [("gutter", "中缝（推荐）"), ("border", "版框线"), ("half", "对半"), ("none", "不切分")]
+        [("gutter", "中缝（推荐）"), ("border", "版框线"), ("half", "对半"),
+         ("none", "不切分"), ("manual", "手动（画线）")]
     ):
         ttk.Radiobutton(split_frame, text=label, variable=split_var, value=val).grid(
             row=0, column=i, padx=4
         )
+    # v2.4+：manual split 选线按钮
+    manual_split_x_var = tk.IntVar(value=0)
+    manual_split_preset_var = tk.StringVar(value="")
+    pick_split_btn = ttk.Button(
+        split_frame, text="选切分线...",
+        command=lambda: open_split_picker(manual_split_x_var, manual_split_preset_var),
+        state="disabled",
+    )
+    pick_split_btn.grid(row=0, column=5, padx=(8, 0))
+
+    def _on_split_change(*_):
+        if split_var.get() == "manual":
+            pick_split_btn.config(state="normal")
+        else:
+            pick_split_btn.config(state="disabled")
+    split_var.trace_add("write", _on_split_change)
 
     # 裁切
     ttk.Label(inner_frame, text="单页裁切:").grid(row=5, column=0, sticky="e", **pad)
@@ -851,6 +932,75 @@ def run_gui() -> None:
         ttk.Button(
             apply_row, text="✓ 应用", width=10, command=lambda: _on_apply()
         ).pack(side="right", padx=(4, 8), pady=2)
+
+    # v2.4+：手动切分线选择弹窗（主窗"选切分线..."按钮触发）
+    def open_split_picker(
+        x_var: tk.IntVar,
+        preset_var: tk.StringVar,
+    ) -> None:
+        """弹窗选切分线 → 把结果写回 x_var / preset_var。
+
+        流程：
+        1. 从 input_var 读输入路径：图片直接用；PDF 用 PyMuPDF 渲首页为灰度图
+        2. 弹 ``SplitLinePicker``（带 Scrollbar 的 Toplevel + Canvas）
+        3. 用户拖线 → 点"确定" → 回调把 ``ManualSplitProfile.split_x`` 写回 x_var，
+           并把 profile JSON 写到一个临时路径写回 preset_var（供 run_pipeline 透传）
+        """
+        from book_cut.io.loader import load_pages
+        from book_cut.split.picker_ui import SplitLinePicker
+
+        input_path_str = input_var.get().strip()
+        if not input_path_str:
+            messagebox.showwarning("未选输入", "请先在「输入路径」选择 PDF 或图片。")
+            return
+        input_path = Path(input_path_str)
+        if not input_path.exists():
+            messagebox.showerror("路径不存在", f"找不到：\n{input_path}")
+            return
+
+        # 加载首页图
+        try:
+            pages = list(load_pages(input_path))
+        except Exception as e:  # noqa: BLE001
+            messagebox.showerror("加载失败", f"无法加载首页：\n{e}")
+            return
+        if not pages:
+            messagebox.showerror("加载失败", "无法获取代表页（输入为空？）")
+            return
+        first_page = pages[0]
+        img = first_page.image
+        if img.mode != "L":
+            img = img.convert("L")
+
+        # 临时 preset 路径（运行结束后可被 GUI 自动清理）
+        tmp_preset_dir = Path(tempfile.gettempdir()) / "book-cut-presets"
+        tmp_preset_dir.mkdir(parents=True, exist_ok=True)
+        # 用时间戳避免并发冲突
+        tmp_preset_path = (
+            tmp_preset_dir / f"manual_split_{int(time.time() * 1000)}.json"
+        )
+
+        deskew_on = bool(deskew_var.get())
+
+        def _on_confirm(profile) -> None:
+            x_var.set(profile.split_x)
+            tmp_preset_path.write_text(profile.to_json(), encoding="utf-8")
+            preset_var.set(str(tmp_preset_path))
+            messagebox.showinfo(
+                "已选切分线",
+                f"split_x = {profile.split_x} / {profile.source_size[0]}\n"
+                f"已保存到：\n{tmp_preset_path}",
+                parent=root,
+            )
+
+        SplitLinePicker(
+            parent=root,
+            image=img,
+            image_path=input_path,
+            deskew_applied=deskew_on,
+            output_path=tmp_preset_path,
+            on_confirm=_on_confirm,
+        )
 
     # v2.3+：通用样本页按钮（默认奇页；偶页用上面"拖偶页框"按钮）
     ttk.Button(manual_btn_frame, text="选择样本页…(奇)",
@@ -1323,6 +1473,13 @@ def run_gui() -> None:
             "manual_mirror_even": None,  # v2.3+ 语义废弃，传 None 即可
             "manual_preset": None,
             "manual_save_preset": None,
+            # v2.4+：manual split（与 --crop manual 共用 IntVar/StringVar 思路）
+            "manual_split_x": (
+                manual_split_x_var.get() if split_var.get() == "manual" else None
+            ),
+            "manual_split_preset": (
+                manual_split_preset_var.get() if split_var.get() == "manual" else None
+            ) or None,
         }
         t = threading.Thread(
             target=_run_pipeline_thread,

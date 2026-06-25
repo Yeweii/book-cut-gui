@@ -1,5 +1,62 @@
 # CHANGELOG
 
+## [0.3.6] - 2026-06-25 · v2.4（手动切分线：--split manual + --pick-split-line）
+
+### Added
+- **`--split manual` 策略**（v2.4+）：用户画一条切分线，整本书复用
+  - 适用于自动切分（gutter / border）失败的古籍：书脊歪斜、中缝飞墨、版框断裂
+  - JSON v1 schema：`{"version": 1, "split_x": N, "source_size": [W, H], "page": 1, "deskew_applied": bool, "notes": "..."}`
+  - 新 class `ManualSplitProfile`（frozen dataclass）+ `apply_manual_split(arr, profile)` 函数
+- **`--manual-split-x N`**（v2.4+）：手动切分 x 坐标（原图坐标系；1 ≤ N < W）
+- **`--manual-split-preset path.json`**（v2.4+）：从 JSON 加载 preset；与 `--manual-split-x` 同给时 preset 优先
+- **`--pick-split-line` 子命令**（v2.4+）：弹 GUI 选切分线，写入 JSON
+  - 用法：`python -m book_cut --pick-split-line -i book.pdf -o preset.json`
+- **GUI 主窗集成**（v2.4+）：
+  - 切分策略 radio 新增「手动（画线）」
+  - 「选切分线...」按钮（默认 disabled，切换到 manual 时启用）
+  - 弹窗 `SplitLinePicker` Toplevel：显示代表页（PDF 渲首页 / 图片直接用）+ Canvas 拖线 + Scrollbar + Enter/Esc 快捷键
+- **`SplitLineCanvas`**：可拖拽竖直切分线 Canvas（大图 downscale，split_x 保留原图坐标系）
+- **示例 preset**：`samples/crop_profiles/v2_manual_split_example.json`（尸子卷 1940×2776）
+
+### Error Codes (MSxxx)
+- **MS001**：`split_x` 越界（< 1 或 ≥ W）
+- **MS002**：`split_x` 不是整数
+- **MS003**：`source_size` 与实际图像不匹配（warn，仍跑）
+- **MS004**：`--split manual` 但未给 x/preset
+- **MS005**：`--manual-split-preset` 文件不存在
+- **MS006**：`from_json` 收到未知 version
+- **MS007**：单页检测 + manual → warn 后跳过切分（输出 [整图]）
+- **MS008**：`--split manual` 1:3+ 多于 2 子图 → warn 后 fallback gutter
+- **MS009**：`preset.deskew_applied` 与 `args.deskew` 不一致 → ValueError fatal
+
+### Implementation
+- `src/book_cut/split/manual.py`（新建）：`ManualSplitProfile` + `apply_manual_split` + JSON v1 schema
+- `src/book_cut/split/__init__.py`：re-export 新类
+- `src/book_cut/split/picker_ui.py`（新建）：`SplitLinePicker` Toplevel + `SplitLineCanvas`
+- `src/book_cut/pipeline/orchestrator.py`：`_compute_page` 加 `manual` 分支 + `manual_split_profile` 参数 + run_pipeline 解析 + MS009 校验
+- `src/book_cut/pipeline/dry_run.py`：透传 `manual_split_profile` 到 `_compute_page`
+- `src/book_cut/cli.py`：`--split` 加 manual 选项 + 3 个新 arg + `--pick-split-line` 子命令
+- `src/book_cut/gui.py`：主窗 radio + 按钮 + `open_split_picker` + `run_pick_split_line`
+
+### Tests
+- `tests/test_manual_split.py`（新建，12 用例 T1-T12）：
+  - T1：round-trip，T2：MS006（version ≠ 1）
+  - T3-T4：MS001（split_x < 1 / ≥ W）
+  - T5：apply 返回正确 shape，T6：MS003 size mismatch warn
+  - T7：宽度 < 2 抛 ValueError
+  - T8：argparse 接受 `--split manual`
+  - T9：MS004（missing profile）
+  - T10：`_compute_page` 用 manual + valid profile → 2 子图
+  - T11：MS009 deskew 一致性
+  - T12：MS007 单页跳过
+
+### Backward Compat
+- 旧调用零侵入：`--split` 默认 `gutter`，不传 `--manual-split-*` → 行为不变
+- 旧 JSON preset（无 `split_x` 字段）→ 不被识别为 manual split preset（fallback 旧 crop 流程）
+- GUI 旧用户：split 默认 `gutter`，新增 radio 默认不勾 → 行为不变
+
+---
+
 ## [0.3.5] - 2026-06-25 · v2.3.5（中间产物清理：--clean-output + dry-run 旧预览自清）
 
 ### Added
