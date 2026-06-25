@@ -54,7 +54,7 @@ class ManualSplitProfile:
         return json.dumps(data, ensure_ascii=False, sort_keys=False)
 
     @classmethod
-    def from_json(cls, s: str) -> "ManualSplitProfile":
+    def from_json(cls, s: str) -> ManualSplitProfile:
         """从 v1 JSON 字符串反序列化。"""
         data = json.loads(s)
         version = data.get("version", 1)
