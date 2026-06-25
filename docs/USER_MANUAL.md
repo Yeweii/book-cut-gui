@@ -813,6 +813,7 @@ GUI 在"二值化"行右侧加 **Dry-run 预览（不写盘）** checkbox + **�
 | `--pdf-page-size {keep,max,first,a4,a5,letter,legal,kpw6,custom}` | `keep` | PDF 页面统一尺寸 |
 | `--pdf-page-dim "WxH"` | None | 自定义尺寸（仅 custom） |
 | `--pdf-page-unit {mm,cm,inch,px}` | `mm` | 自定义尺寸单位 |
+| `--clean-output`（v2.3.5+） | **关** | 运行前 `rmtree(--output)`，**有数据丢失风险**——会清空整个 output_dir 再写新结果。dry-run 模式无效 |
 
 #### 4.9.8 Dry-run 参数（v1.8+）
 
@@ -821,6 +822,8 @@ GUI 在"二值化"行右侧加 **Dry-run 预览（不写盘）** checkbox + **�
 | `--dry-run` | 关 | 预览模式（不写盘） |
 | `--sample-n N` | `3` | 采样页数（最小 1） |
 | `--preview-output DIR` | 系统 tmpdir | 预览输出目录 |
+
+**v2.3.5+ 卫生清理**：每次新 dry-run 启动时，自动扫描 `tempfile.gettempdir()` 下的 `book-cut-preview-*` 目录，删除 **>7 天**的旧预览（best-effort，删不掉跳过）。无需 opt-in。旧版本残留的预览目录第一次跑新版本时自动清。
 
 ---
 

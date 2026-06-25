@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import shutil
 import tempfile
 import threading
 import time
@@ -16,6 +17,56 @@ from PIL import Image
 
 if TYPE_CHECKING:
     from book_cut.io.loader import PageInfo
+
+
+# v2.3.5+：dry-run 旧预览目录前缀
+_PREVIEW_DIR_PREFIX = "book-cut-preview-"
+
+# v2.3.5+：dry-run 旧预览目录最大保留天数（超期自动删，避免 tmpdir 累积）
+DEFAULT_PREVIEW_MAX_AGE_DAYS = 7
+
+
+def cleanup_old_previews(
+    max_age_days: int = DEFAULT_PREVIEW_MAX_AGE_DAYS,
+    tmpdir: Path | None = None,
+) -> int:
+    """清理 tmpdir 下超期的 book-cut-preview-* 目录（v2.3.5+）。
+
+    Args:
+        max_age_days: 保留天数（默认 7），超期删除
+        tmpdir: 扫描根目录（默认 ``tempfile.gettempdir()``）
+
+    Returns:
+        删除的目录数。
+
+    Why:
+        之前 dry-run 每次都在 tmpdir 留一个新目录（``book-cut-preview-{ts}``），
+        跑多了会累积（实测 2 天留 2 个 ≈ 4MB）。每次新 dry-run 前扫一遍旧目录
+        —— 是无副作用的卫生清理，不需要 opt-in。
+    """
+    root = Path(tmpdir) if tmpdir is not None else Path(tempfile.gettempdir())
+    if not root.is_dir():
+        return 0
+    now = time.time()
+    max_age_sec = max_age_days * 86400
+    removed = 0
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        if not entry.name.startswith(_PREVIEW_DIR_PREFIX):
+            continue
+        try:
+            mtime = entry.stat().st_mtime
+        except OSError:
+            continue
+        if (now - mtime) > max_age_sec:
+            try:
+                shutil.rmtree(entry)
+                removed += 1
+            except OSError:
+                pass  # best-effort：清不掉就跳过
+    return removed
+
 
 
 def run_dry_run(
@@ -56,6 +107,9 @@ def run_dry_run(
 
     副作用：写预览到 ``preview_dir``（或 tmpdir），不创建 ``output_dir``，不写图，不生成 PDF。
     """
+    # v2.3.5+：先扫一遍 tmpdir 旧预览目录（>7 天自动删，避免累积）
+    cleanup_old_previews()
+
     from book_cut.pipeline.orchestrator import _compute_page
     from book_cut.pipeline.preview import (
         compute_summary,

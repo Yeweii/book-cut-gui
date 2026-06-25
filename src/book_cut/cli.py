@@ -20,6 +20,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--input", "-i", help="输入路径：PDF / 图片 / 文件夹")
     parser.add_argument("--output", "-o", help="输出目录")
     parser.add_argument(
+        "--clean-output",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="v2.3.5+：运行前先 ``rmtree(--output)``（避免新旧文件混在一起）。"
+        "默认 False（不删）。**有数据丢失风险**，建议先备份。",
+    )
+    parser.add_argument(
         "--deskew",
         action="store_true",
         help="倾斜校正（Hough 法，auto 回退投影法）",

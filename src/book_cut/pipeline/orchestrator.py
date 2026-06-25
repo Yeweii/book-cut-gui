@@ -575,6 +575,13 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
     """
     output_dir = Path(args.output)
     dry_run: bool = bool(getattr(args, "dry_run", False))
+    clean_output: bool = bool(getattr(args, "clean_output", False))
+    # v2.3.5+ --clean-output：运行前 rmtree(output_dir)（避免新旧混在一起）
+    if not dry_run and clean_output and output_dir.exists():
+        import shutil
+
+        shutil.rmtree(output_dir)
+        print(f"[INFO] --clean-output：已清空 {output_dir}")
     # v1.8+ dry-run：不创建输出目录（避免污染用户文件系统）
     if not dry_run:
         output_dir.mkdir(parents=True, exist_ok=True)

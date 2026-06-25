@@ -432,6 +432,14 @@ def run_gui() -> None:
 
     ttk.Button(inner_frame, text="浏览…", command=browse_output).grid(row=2, column=2, **pad)
 
+    # v2.3.5+ --clean-output checkbox（放在输出目录行下）
+    clean_output_var = tk.BooleanVar(value=False)
+    ttk.Checkbutton(
+        inner_frame,
+        text="运行前清空输出目录（--clean-output，有数据丢失风险）",
+        variable=clean_output_var,
+    ).grid(row=2, column=1, sticky="w", padx=(4, 0), pady=(2, 0))
+
     # 切分策略
     ttk.Label(inner_frame, text="预处理:").grid(row=3, column=0, sticky="e", **pad)
     pp_frame = ttk.Frame(inner_frame)
@@ -1298,6 +1306,8 @@ def run_gui() -> None:
             "dry_run": dry_run_var.get(),
             "sample_n": sample_n_var.get(),
             "preview_output": preview_dir_var.get() or None,
+            # v2.3.5+ --clean-output
+            "clean_output": clean_output_var.get(),
             # v1.9+：图片预处理增强（chain 由勾选状态自动拼装）
             "preprocess": _build_preprocess_chain(),
             "preprocess_quality": PREPROCESS_QUALITY_MAP[preprocess_quality_var.get()],

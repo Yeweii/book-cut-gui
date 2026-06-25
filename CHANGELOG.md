@@ -1,5 +1,42 @@
 # CHANGELOG
 
+## [0.3.5] - 2026-06-25 · v2.3.5（中间产物清理：--clean-output + dry-run 旧预览自清）
+
+### Added
+- **`--clean-output` 选项**（v2.3.5+）：运行前 `rmtree(--output)`，避免新旧文件混在一起
+  - **默认 False**（保护用户数据；有数据丢失风险）
+  - CLI：`--clean-output` / `--no-clean-output`（BooleanOptionalAction）
+  - GUI：输出目录行下方新增 checkbox（默认未勾）
+  - dry-run 模式下**永不触发**（dry-run 承诺不动 output_dir）
+  - orchestrator 在 `mkdir(parents=True, exist_ok=True)` 之前判断
+- **dry-run 旧预览自动清理**（v2.3.5+，无需 opt-in）：新 dry-run 启动时扫一遍 `tempfile.gettempdir()` 下的 `book-cut-preview-*` 目录，**自动删 >7 天的**
+  - 新函数 `book_cut.pipeline.dry_run.cleanup_old_previews(max_age_days=7, tmpdir=None)`
+  - 之前 dry-run 每次留一个新目录，跑多了会累积（实测 2 天留 2 个 ≈ 4MB），现自动清
+  - best-effort：删不掉就跳过，不影响主流程
+
+### Implementation
+- `cli.py`：新增 `--clean-output` argparse
+- `pipeline/orchestrator.py`：在 `output_dir.mkdir` 之前 `shutil.rmtree(output_dir)`（仅当 `args.clean_output` 且非 dry-run）
+- `pipeline/dry_run.py`：新增 `cleanup_old_previews()` + `DEFAULT_PREVIEW_MAX_AGE_DAYS=7` + `_PREVIEW_DIR_PREFIX`；`run_dry_run()` 入口调用
+- `gui.py`：新增 `clean_output_var` checkbox + 透传到 `values` dict
+
+### Tests
+- `tests/test_clean_output_and_preview.py`（新建，12 用例）：
+  - T1-T5：`cleanup_old_previews` 5 项（删超期 / 保留新鲜 / 跳过非 prefix / max_age=0 全删 / 缺失 tmpdir）
+  - T6-T7：默认值 + `tmpdir=None` 不崩
+  - T8-T10：argparse 默认 False / `--clean-output` True / `--no-clean-output` False
+  - T11：dry-run + `clean_output=True` → **不删** output_dir
+  - T12：`clean_output=True` + 真实样本 → 旧文件被清，新文件生成
+- `tests/test_c3_pipeline_split.py`：阈值 1650 → 1720（binarize_cleanup + clean_output + 旧 preview 清理）
+- 测试套件 **457 → 469**（+12），全过；ruff 在修改文件 0 错
+
+### Backward Compat
+- 旧调用零侵入：`--clean-output` 不传 → False（保持原行为）
+- GUI 旧版本用户：checkbox 默认未勾 = 行为不变
+- 旧 dry-run 残留目录：第一次跑新版本时自动清（>7 天的）
+
+---
+
 ## [0.3.4] - 2026-06-25 · v2.3.3（二值化后清理：去古籍扫描件尘点）
 
 ### Added

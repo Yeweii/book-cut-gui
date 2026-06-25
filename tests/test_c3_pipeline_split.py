@@ -127,12 +127,14 @@ def test_c3_orchestrator_line_count_under_600():
     + 18 行（docstring / call sites / dry_run 透传）。
     v2.2 manual crop：阈值 850 → 900 —— 加 manual 模式（orchestrator +25 行）：
     crop_mode=="manual" 分支 + ManualCropProfile 构造 + preset 加载/保存。
+    v2.3 page_order × is_even：阈值 900 → 920 —— 2 处 if page_order 块（+12 行含注释）。
+    v2.3.1 单页全局页号：阈值 920 → 935 —— global_page_no 形参 + 2 call site + dry_run（+15 行）。
     """
     from pathlib import Path
 
     p = Path(__file__).parent.parent / "src" / "book_cut" / "pipeline" / "orchestrator.py"
     lines = sum(1 for _ in p.open())
-    assert lines < 900, f"orchestrator.py 应 < 900 行，实际 {lines}"
+    assert lines < 935, f"orchestrator.py 应 < 935 行，实际 {lines}"
 
 
 def test_c3_outline_line_count_under_150():
@@ -175,7 +177,12 @@ def test_c3_split_saves_total_lines():
     # （orchestrator +31、dry_run +6、total +37）
     # v2.2 manual crop：阈值 1540 → 1610 —— orchestrator manual 模式 +25、manual.py 233
     # （cli.py +35 不在 pipeline 包内不计；detect/manual.py 233 也不在 pipeline 包内）
-    assert total < 1610, f"拆分后总行数 {total} 超过预算 1610（原 455）"
+    # v2.3 page_order × is_even 映射：阈值 1610 → 1630 —— orchestrator 2 处 if page_order 块（+20）
+    # v2.3.1 单页全局页号：阈值 1630 → 1650 —— orchestrator + dry_run（+15）
+    # v2.3.3 binarize_cleanup：阈值 1650 → 1680 —— orchestrator _compute_page +3 call site × 3 + dry_run（+20）
+    # v2.3.5 --clean-output + 旧 preview 清理：阈值 1680 → 1720
+    #   —— orchestrator +6 (clean_output rmtree) + dry_run +42 (cleanup_old_previews + 1 行调用)
+    assert total < 1720, f"拆分后总行数 {total} 超过预算 1720（原 455）"
     assert total > 500, f"拆分后总行数 {total} 异常少"
 
 
@@ -540,11 +547,17 @@ def test_v22_run_pipeline_crop_manual_preset_saves(tmp_path):
     assert preset_path.exists()
     import json
     data = json.loads(preset_path.read_text())
-    assert data["top"] == 50
-    assert data["bottom"] == 40
-    assert data["inner"] == 80
-    assert data["outer"] == 30
-    assert data["mirror_even"] is True
+    # v2.3+ preset 写 v2 schema（odd_page + even_page + version=2）
+    assert data["version"] == 2
+    assert data["odd_page"]["top"] == 50
+    assert data["odd_page"]["bottom"] == 40
+    assert data["odd_page"]["inner"] == 80
+    assert data["odd_page"]["outer"] == 30
+    # 偶页默认从奇页镜像
+    assert data["even_page"]["top"] == 50
+    assert data["even_page"]["bottom"] == 40
+    assert data["even_page"]["inner"] == 30
+    assert data["even_page"]["outer"] == 80
 
 
 def test_v22_run_pipeline_crop_manual_preset_loads(tmp_path):
