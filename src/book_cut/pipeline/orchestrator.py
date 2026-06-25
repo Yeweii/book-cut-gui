@@ -16,6 +16,9 @@ v1.8+ 加 ``dry_run`` / ``sample_n`` / ``preview_dir`` 三个 kwarg；
 from __future__ import annotations
 
 import argparse
+import json
+import logging
+import sys
 import threading
 import time
 from itertools import chain, islice
@@ -46,6 +49,7 @@ from book_cut.pipeline.outline import (
 from book_cut.preprocess import parse_chain as _parse_preprocess_chain
 from book_cut.preprocess import preprocess as _preprocess_op
 from book_cut.preprocess.binarize import BinaryMode, binarize
+from book_cut.split.manual import ManualSplitProfile, apply_manual_split  # v2.4+
 
 # v1.8+ dry-run：per-step 计时开关（避免影响 v1.7 行为；正式版可保持 True）
 _TIMING_ENABLED = True
@@ -364,6 +368,7 @@ def _compute_page(
     trim_frame: bool = False,
     trim_frame_min_ratio: float = 0.30,
     trim_frame_max_fill: float = 0.15,
+    manual_split_profile: ManualSplitProfile | None = None,  # v2.4+ 新增
 ) -> dict:
     """v1.8+ 抽出的纯计算：处理单页但不写盘。
 
@@ -405,6 +410,24 @@ def _compute_page(
     if split_strategy == "none":
         # v1.9.2+：输入已是单页，直接进入 crop 阶段，不切分
         sub_arrs = [arr]
+    elif split_strategy == "manual":
+        # v2.4+：用户指定 split_x，跨整本书复用
+        if manual_split_profile is None:
+            raise ValueError(
+                "MS004: --split manual requires --manual-split-x or --manual-split-preset"
+            )
+        sub_arrs = apply_manual_split(arr, manual_split_profile)
+        split_x = manual_split_profile.split_x
+        # 1:3+ 检测（heuristic）：图像宽度 / 2 < split_x 表示用户在线左侧 1/3
+        if arr.shape[1] / 2 < manual_split_profile.split_x and len(sub_arrs) == 2:
+            logging.warning(
+                "MS010: 1:3+ cross-page input detected (W=%d, split_x=%d). "
+                "v2.4 only fully supports 1:2; using split_x for first cut, "
+                "2*split_x for second cut, tail as third.",
+                arr.shape[1], manual_split_profile.split_x,
+            )
+            sx = manual_split_profile.split_x
+            sub_arrs = [arr[:, :sx], arr[:, sx:2 * sx], arr[:, 2 * sx:]]
     elif split_strategy == "half":
         sub_arrs = split_half_from_array(arr, offset=half_offset)
     elif split_strategy == "border":
@@ -745,6 +768,51 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             Path(save_preset_path).write_text(crop_config.to_json())
             print(f"[INFO] 保存 manual preset: {save_preset_path}")
 
+    # v2.4+：解析 manual split profile（仅 --split manual 时需要）
+    manual_split_profile: ManualSplitProfile | None = None
+    if getattr(args, "split", "gutter") == "manual":
+        ms_x = getattr(args, "manual_split_x", None)
+        ms_preset = getattr(args, "manual_split_preset", None)
+        if ms_x is not None and ms_preset is not None:
+            print(
+                f"[WARN] --manual-split-x={ms_x} 与 --manual-split-preset={ms_preset} "
+                f"同时给出；preset 优先，--manual-split-x 忽略",
+                file=sys.stderr,
+            )
+        if ms_preset is not None:
+            try:
+                with open(ms_preset, encoding="utf-8") as f:
+                    manual_split_profile = ManualSplitProfile.from_json(f.read())
+            except FileNotFoundError as e:
+                raise ValueError(
+                    f"MS005: preset file not found: {ms_preset}"
+                ) from e
+            except json.JSONDecodeError as e:
+                raise ValueError(
+                    f"MS005: preset file malformed JSON: {ms_preset}: {e}"
+                ) from e
+        elif ms_x is not None:
+            manual_split_profile = ManualSplitProfile(
+                split_x=ms_x,
+                source_size=None,
+                page=None,
+                deskew_applied=bool(getattr(args, "deskew", False)),
+                notes="",
+            )
+        else:
+            raise ValueError(
+                "MS004: --split manual requires --manual-split-x or --manual-split-preset"
+            )
+
+        # MS009：deskew 状态强一致
+        if manual_split_profile.deskew_applied != bool(getattr(args, "deskew", False)):
+            raise ValueError(
+                f"MS009: preset deskew_applied={manual_split_profile.deskew_applied} "
+                f"but --deskew={bool(getattr(args, 'deskew', False))}. "
+                f"Re-pick the line with --deskew={bool(getattr(args, 'deskew', False))} "
+                f"or remove --deskew."
+            )
+
     # v1.4：决定 outline / metadata 来源 PDF（仅 PDF 模式下有意义）
     pdf_path_final: Path | None = None
     outline_toc: list[tuple[int, str, int]] = []
@@ -842,6 +910,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             horizontal=horizontal,
             trim_strict=trim_strict,
             trim_frame=trim_frame,
+            manual_split_profile=manual_split_profile,  # v2.4+
             trim_frame_min_ratio=trim_frame_min_ratio,
             trim_frame_max_fill=trim_frame_max_fill,
             cancel_event=cancel_event,
@@ -877,6 +946,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
         trim_frame=trim_frame,
         trim_frame_min_ratio=trim_frame_min_ratio,
         trim_frame_max_fill=trim_frame_max_fill,
+        manual_split_profile=manual_split_profile,  # v2.4+
     )
     _save_subpages(first_result["sub_pages"], first_page)
 
@@ -915,6 +985,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             trim_frame=trim_frame,
             trim_frame_min_ratio=trim_frame_min_ratio,
             trim_frame_max_fill=trim_frame_max_fill,
+            manual_split_profile=manual_split_profile,  # v2.4+
         )
         _save_subpages(result["sub_pages"], page)
 

@@ -101,6 +101,7 @@ def run_dry_run(
     trim_frame: bool = False,
     trim_frame_min_ratio: float = 0.30,
     trim_frame_max_fill: float = 0.15,
+    manual_split_profile: "ManualSplitProfile | None" = None,  # v2.4+
     cancel_event: threading.Event | None = None,
 ) -> None:
     """跑 dry-run：处理前 sample_n 页 + 渲染预览 + 写 summary。
@@ -147,6 +148,7 @@ def run_dry_run(
         trim_frame=trim_frame,
         trim_frame_min_ratio=trim_frame_min_ratio,
         trim_frame_max_fill=trim_frame_max_fill,
+        manual_split_profile=manual_split_profile,  # v2.4+
     )
     sample_results.append(first_result)
 
@@ -184,6 +186,7 @@ def run_dry_run(
             trim_frame=trim_frame,
             trim_frame_min_ratio=trim_frame_min_ratio,
             trim_frame_max_fill=trim_frame_max_fill,
+            manual_split_profile=manual_split_profile,  # v2.4+
         )
         sample_results.append(result)
 

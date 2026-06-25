@@ -134,7 +134,8 @@ def test_c3_orchestrator_line_count_under_600():
 
     p = Path(__file__).parent.parent / "src" / "book_cut" / "pipeline" / "orchestrator.py"
     lines = sum(1 for _ in p.open())
-    assert lines < 935, f"orchestrator.py 应 < 935 行，实际 {lines}"
+    # v2.4 --split manual: 阈值 935 → 1020 —— orchestrator +45 (manual branch + MS009 + run_pipeline 解析)
+    assert lines < 1020, f"orchestrator.py 应 < 1020 行，实际 {lines}"
 
 
 def test_c3_outline_line_count_under_150():
@@ -182,7 +183,8 @@ def test_c3_split_saves_total_lines():
     # v2.3.3 binarize_cleanup：阈值 1650 → 1680 —— orchestrator _compute_page +3 call site × 3 + dry_run（+20）
     # v2.3.5 --clean-output + 旧 preview 清理：阈值 1680 → 1720
     #   —— orchestrator +6 (clean_output rmtree) + dry_run +42 (cleanup_old_previews + 1 行调用)
-    assert total < 1720, f"拆分后总行数 {total} 超过预算 1720（原 455）"
+    # v2.4 --split manual：阈值 1720 → 1820 —— orchestrator +45 (manual branch + MS009 校验 + run_pipeline 解析) + dry_run +12 (manual_split_profile 透传)
+    assert total < 1820, f"拆分后总行数 {total} 超过预算 1820（原 455）"
     assert total > 500, f"拆分后总行数 {total} 异常少"
 
 
