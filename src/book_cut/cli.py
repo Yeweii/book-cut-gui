@@ -33,11 +33,12 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--split",
-        choices=["none", "half", "gutter", "border"],
+        choices=["none", "half", "gutter", "border", "manual"],
         default="gutter",
         help="切分策略：none=不切分（输入已是单页，直接走 crop）/"
         "half=对半（**要求扫描严格居中**；不确定时请用 gutter） / "
-        "gutter=中缝（默认）/ border=版框线",
+        "gutter=中缝（默认）/ border=版框线 / "
+        "manual=手动（v2.4+ 配合 --manual-split-x 或 --manual-split-preset，整本书一条线）",
     )
     parser.add_argument(
         "--no-single-page",
@@ -277,6 +278,27 @@ def build_parser() -> argparse.ArgumentParser:
         default="ltr",
         help="1:2 切分时输出顺序：ltr=先左后右（默认）/ rtl=先右后左（古籍竖排常用）",
     )
+    # v2.4+：manual split 三件套
+    parser.add_argument(
+        "--manual-split-x",
+        type=int,
+        default=None,
+        help="手动切分线 x 坐标（v2.4+；post-deskew 坐标系下，1 ≤ x < W）。"
+        "需配合 --split manual 使用。与 --manual-split-preset 同时给时，preset 优先。",
+    )
+    parser.add_argument(
+        "--manual-split-preset",
+        type=str,
+        default=None,
+        help="手动切分线 JSON preset 路径（v2.4+；v1 schema，参见 samples/crop_profiles/v2_manual_split_example.json）。"
+        "需配合 --split manual 使用。preset 含 deskew_applied 字段，与 --deskew 状态不一致时 fatal (MS009)。",
+    )
+    parser.add_argument(
+        "--pick-split-line",
+        action="store_true",
+        help="v2.4+ 子命令：弹 GUI 选切分线，写入 JSON 到 -o/--output。"
+        "用法：python -m book_cut --pick-split-line -i book.pdf -o preset.json",
+    )
     parser.add_argument(
         "--no-outline",
         dest="outline",
@@ -341,6 +363,12 @@ def main(argv: list[str] | None = None) -> int:
 
         run_gui()
         return 0
+
+    if args.pick_split_line:
+        if not args.input or not args.output:
+            parser.error("--pick-split-line 需要 -i INPUT 与 -o OUTPUT_JSON")
+        from book_cut.gui import run_pick_split_line
+        return run_pick_split_line(args)
 
     if not args.input or not args.output:
         parser.error("--input 与 --output 必填（或使用 --gui）")
