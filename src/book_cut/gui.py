@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import queue
+import re
 import subprocess
 import sys
 import threading
@@ -158,14 +159,35 @@ def _format_error(exc: BaseException) -> str:
 
 
 class _QueueWriter:
-    """把 stdout/stderr 写入 queue，供 GUI 显示。"""
+    """把 stdout/stderr 写入 queue，供 GUI 显示。
+
+    v2.3.3+：拦截 tqdm 进度行（"\r切分: 50%|...| 38/76 ...\r" 或
+    "\r切分: 76it [...]\r"），发 ``("progress", pages_done)`` 而不是 log。
+    GUI 据此更新 determinate 进度条，不影响 stdout 文本日志流。
+    """
+
+    # tqdm 两种格式：
+    #   - 中间循环："切分:  50%|██████▌ | 38/76 [00:01<...]"
+    #     → group 1 = "38" (current)，需要 +1 给 tqdm 循环外的 first_page
+    #   - 完成行  ："切分: 76it [02:06, 1.69s/it]"
+    #     → group 2 = "76" (initial + len = 总页数)
+    _PROGRESS_RE = re.compile(r"\|\s*(\d+)\s*/\s*\d+|\b(\d+)\s*it\b")
 
     def __init__(self, q: queue.Queue, tag: str) -> None:
         self._q = q
         self._tag = tag
 
     def write(self, msg: str) -> None:
-        if msg and not msg.isspace():
+        if not msg or msg.isspace():
+            return
+        m = self._PROGRESS_RE.search(msg)
+        if m:
+            if m.group(1) is not None:
+                pages_done = int(m.group(1)) + 1
+            else:
+                pages_done = int(m.group(2))
+            self._q.put(("progress", pages_done))
+        else:
             self._q.put((self._tag, msg.rstrip()))
 
     def flush(self) -> None:
@@ -1159,12 +1181,25 @@ def run_gui() -> None:
 
     dry_run_var.trace_add("write", _on_dry_run_change)
 
-    # 进度条（v2.2.1+：行号 +1 让出给 manual_frame）
-    progress = ttk.Progressbar(inner_frame, mode="indeterminate")
-    progress.grid(row=9, column=0, columnspan=3, sticky="ew", padx=8, pady=(12, 4))
+    # 进度条（v2.3.3+：determinate + 标签 "X / Y (Z%)"）
+    # indeterminate 沙漏条只能"动"看不到进度，改为真实百分比填充
+    progress_frame = ttk.Frame(inner_frame)
+    progress_frame.grid(row=9, column=0, columnspan=3, sticky="ew", padx=8, pady=(12, 4))
+    progress_frame.columnconfigure(0, weight=1)
+
+    progress = ttk.Progressbar(progress_frame, mode="determinate", maximum=100, value=0)
+    progress.grid(row=0, column=0, sticky="ew")
+
+    progress_label_var = tk.StringVar(value="")
+    progress_label = ttk.Label(progress_frame, textvariable=progress_label_var, width=18, anchor="e")
+    progress_label.grid(row=0, column=1, padx=(8, 0))
 
     # v1.8.1+ cancel event：每次 on_run 新建一个，透传给 pipeline thread
     cancel_event_holder: list[threading.Event | None] = [None]
+    # v2.3.3+：进度条用总页数（on_run() 填，poll_queue() 读）
+    total_pages_holder: list[int] = [0]
+    # 同上：最后进度值（停止时显示 "X / Y" 用）
+    last_progress_holder: list[int] = [0]
 
     # 执行按钮
     def _build_preprocess_chain() -> str:
@@ -1197,7 +1232,31 @@ def run_gui() -> None:
         running_var.set(True)
         run_btn.config(state="disabled")
         stop_btn.config(state="normal")
-        progress.start(80)
+        # v2.3.3+：determinate 进度条 → 先 count_pages 设置 maximum
+        # count_pages 失败或 dry-run 时退化到 indeterminate
+        total_pages_holder[0] = 0
+        if dry_run_var.get():
+            progress.configure(mode="indeterminate", maximum=100, value=0)
+            progress.start(80)
+            progress_label_var.set("(Dry-run)")
+        else:
+            try:
+                from book_cut.io.loader import count_pages
+                total_pages_holder[0] = count_pages(Path(input_var.get()))
+            except Exception:
+                total_pages_holder[0] = 0
+            if total_pages_holder[0] > 0:
+                progress.stop()
+                progress.configure(
+                    mode="determinate",
+                    maximum=total_pages_holder[0],
+                    value=0,
+                )
+                progress_label_var.set(f"0 / {total_pages_holder[0]}")
+            else:
+                progress.configure(mode="indeterminate", maximum=100, value=0)
+                progress.start(80)
+                progress_label_var.set("")
         # 新建 cancel event
         cancel_event_holder[0] = threading.Event()
 
@@ -1357,12 +1416,49 @@ def run_gui() -> None:
         try:
             while True:
                 tag, msg = log_queue.get_nowait()
+                # v2.3.3+：progress 不进日志，直接更新进度条
+                if tag == "progress":
+                    last_progress_holder[0] = int(msg)
+                    total = total_pages_holder[0]
+                    if total > 0:
+                        try:
+                            progress.configure(value=last_progress_holder[0])
+                            pct = int(last_progress_holder[0] / total * 100)
+                            progress_label_var.set(
+                                f"{last_progress_holder[0]} / {total} ({pct}%)"
+                            )
+                        except tk.TclError:
+                            pass  # widget 已销毁（窗口关闭）
+                    continue
                 log_text.configure(state="normal")
                 log_text.insert(tk.END, msg + "\n", tag if tag == "error" else ())
                 log_text.see(tk.END)
                 log_text.configure(state="disabled")
                 if tag in ("done", "error"):
-                    progress.stop()
+                    try:
+                        progress.stop()
+                        total = total_pages_holder[0]
+                        last = last_progress_holder[0]
+                        if tag == "done":
+                            # 区分"完成"vs"取消"（看 msg 是否带 ⏹）
+                            if isinstance(msg, str) and "⏹" in msg:
+                                if total > 0:
+                                    progress.configure(value=last)
+                                    progress_label_var.set(f"⏹ 已停止 ({last} / {total})")
+                                else:
+                                    progress_label_var.set("⏹ 已停止")
+                            elif total > 0:
+                                progress.configure(value=total)
+                                progress_label_var.set(f"✅ {total} / {total}")
+                            else:
+                                progress_label_var.set("✅")
+                        else:
+                            if total > 0:
+                                progress_label_var.set(f"❌ {last} / {total}")
+                            else:
+                                progress_label_var.set("❌")
+                    except tk.TclError:
+                        pass
                     run_btn.config(state="normal")
                     stop_btn.config(state="disabled")
                     running_var.set(False)

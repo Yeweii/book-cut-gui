@@ -246,6 +246,52 @@ def iter_pages(source: str | Path) -> Iterator[PageInfo]:
 
 
 # ----------------------------------------------------------------------------
+# v2.3.3+：轻量页数统计（GUI 进度条 maximum 用，不渲染）
+# ----------------------------------------------------------------------------
+
+
+def count_pages(source: str | Path) -> int:
+    """轻量统计输入总页数（不渲染图像）。
+
+    用于 GUI 启动流水线前预设 ``Progressbar(maximum=)``。
+    PDF 用 ``pymupdf.open().page_count`` 直接读 metadata；
+    图片按 1 页计；目录递归求和（PDF + 图片）。
+
+    Args:
+        source: PDF / 图片 / 目录路径。
+
+    Returns:
+        总页数。
+
+    Raises:
+        FileNotFoundError: 路径不存在。
+        ValueError: 路径类型不支持。
+    """
+    import pymupdf
+
+    path = Path(source)
+    if not path.exists():
+        raise FileNotFoundError(f"输入路径不存在: {path}")
+    if path.is_dir():
+        total = 0
+        for p in path.rglob("*"):
+            if not p.is_file():
+                continue
+            if _is_pdf(p):
+                with pymupdf.open(p) as doc:
+                    total += doc.page_count
+            elif _is_image(p):
+                total += 1
+        return total
+    if _is_pdf(path):
+        with pymupdf.open(path) as doc:
+            return doc.page_count
+    if _is_image(path):
+        return 1
+    raise ValueError(f"不支持的输入类型: {path}")
+
+
+# ----------------------------------------------------------------------------
 # v1.7 新增：流式产出每页 (width, height)，仅取尺寸不渲染
 # ----------------------------------------------------------------------------
 

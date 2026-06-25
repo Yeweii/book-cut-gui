@@ -1,5 +1,33 @@
 # CHANGELOG
 
+## [0.3.3] - 2026-06-25 · v2.3.3（GUI 真实进度条）
+
+### Changed
+- **进度条 indeterminate → determinate**（v2.3.3+）：原来的沙漏条只是动画，不反映实际进度。现显示 `已处理 / 总页（百分比）`：
+  - 启动前 `count_pages(input)` 轻量统计总页数（只读 PDF metadata，不渲染）
+  - 进度条 `mode="determinate"`，`maximum = total_pages`
+  - 右侧 Label 实时显示 `X / Y (Z%)`
+  - 完成：`✅ Y / Y`；停止：`⏹ 已停止 (X / Y)`；出错：`❌ X / Y`
+- **dry-run 模式**：进度条退回 indeterminate + Label `(Dry-run)`（dry-run 不进 tqdm 循环，没真实页数）
+
+### Added
+- **`book_cut.io.loader.count_pages(source)`**：轻量页数统计，单 PDF / 单图 / 文件夹 / 嵌套都支持
+- **`tests/test_loader_count_pages.py`**：7 个用例（单 PDF / 单图 / 文件夹混合 / 嵌套 / 不存在 / 不支持 / 空目录）
+
+### Implementation
+- **`gui._QueueWriter` 加 tqdm 正则**：`\r切分: 50%|...| 38/76 ...\r` 或 `\r切分: 76it ...\r` → 发 `("progress", pages_done)` 而不是 log
+  - 不需要改 orchestrator 任何代码
+  - 中间循环 "n/total" → pages_done = n + 1（+1 给 tqdm 循环外的 first_page）
+  - 完成行 "Xit" → pages_done = X（initial + len = 总页数）
+- **`total_pages_holder` + `last_progress_holder`**：on_run 填 / poll_queue 读，跨线程传递状态
+
+### Tests
+- 测试套件 **435 → 442**（+7），全过
+- ruff 在修改文件 0 错
+- tqdm 输出解析 smoke test：模拟 76 页输出 → progress 序列 [1, 11, 41, 76, 76] ✓
+
+---
+
 ## [0.3.2] - 2026-06-25 · v2.3.3（PDF 页面尺寸：Kindle KPW6）
 
 ### Added
