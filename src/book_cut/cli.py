@@ -275,8 +275,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--page-order",
         choices=["ltr", "rtl"],
-        default="ltr",
-        help="1:2 切分时输出顺序：ltr=先左后右（默认）/ rtl=先右后左（古籍竖排常用）",
+        default="rtl",
+        help="1:2 切分时输出顺序：ltr=先左后右 / rtl=先右后左（v2.4+ 默认；古籍竖排常用）",
     )
     # v2.4+：manual split 三件套
     parser.add_argument(

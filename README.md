@@ -70,7 +70,7 @@ python -m book_cut --gui
 | `--half-offset` | `0` | 对半切的像素偏移（仅 `--split half` 生效） |
 | `--format` | `png` | `png` / `jpg` / `tif` / `webp` |
 | `--pdf` | 关 | 同时输出合并 PDF |
-| `--page-order` | `ltr` | 1:2 切分时输出顺序：`ltr`=左先右后 / `rtl`=右先左后（古籍竖排常用） |
+| `--page-order` | `rtl` | 1:2 切分时输出顺序：`ltr`=左先右后 / `rtl`=右先左后（v2.4+ 默认；古籍竖排常用） |
 | `--no-outline` | 关 | 关闭 PDF outline（书签）/ metadata 透传（仅 `--pdf` 模式有效；兜底用） |
 | `--pdf-page-size` | `keep` | PDF 页面统一尺寸（v1.7+；仅 `--pdf` 模式有效）：`keep`=保持原图 / `max`=所有页 max(W)×max(H) / `first`=首页 / `a4` / `a5` / `letter` / `legal` / `custom`（配 `--pdf-page-dim` + `--pdf-page-unit`） |
 | `--pdf-page-dim` | 无 | 自定义尺寸 `WxH`（如 `280x200`；仅 `--pdf-page-size custom`） |

@@ -615,7 +615,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
     binarize_method: str = getattr(args, "binarize", "none")
     deskew_enabled: bool = getattr(args, "deskew", False)
     auto_single_page: bool = getattr(args, "auto_single_page", True)
-    page_order: str = getattr(args, "page_order", "ltr")  # v1.4 新增
+    page_order: str = getattr(args, "page_order", "rtl")  # v1.4 新增（v2.4+ 默认 rtl）
     outline_enabled: bool = getattr(args, "outline", True)  # v1.4 新增
     # v1.6+ B线：--no-morph 关闭形态学（古籍飞白/极小字可见时用）
     use_morph: bool = not getattr(args, "no_morph", False)

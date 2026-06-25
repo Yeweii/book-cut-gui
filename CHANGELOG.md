@@ -1,6 +1,12 @@
 # CHANGELOG
 
-## [0.3.6] - 2026-06-25 · v2.4（手动切分线：--split manual + --pick-split-line）
+## [0.3.6] - 2026-06-25 · v2.4（手动切分线：--split manual + --pick-split-line + 页序默认 rtl）
+
+### Changed
+- **`--page-order` 默认值 `ltr` → `rtl`**（v2.4+）
+  - 古籍竖排常用 rtl（先右后左）：扫描得到的子图 [左, 右] 输出成 [右, 左]，对应古书翻开顺序
+  - CLI / GUI / orchestrator 三处默认值同步更新
+  - 旧用户（ltr 依赖）：显式 `--page-order ltr` 即可恢复
 
 ### Added
 - **`--split manual` 策略**（v2.4+）：用户画一条切分线，整本书复用

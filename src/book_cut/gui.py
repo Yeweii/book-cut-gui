@@ -1091,8 +1091,8 @@ def run_gui() -> None:
         row=0, column=1, padx=12
     )
 
-    # v1.4：页序 + 保留书签
-    order_var = tk.StringVar(value=PAGE_ORDER_LABELS[0])
+    # v1.4：页序 + 保留书签（v2.4+ 默认「先右后左」/ rtl，古籍竖排常用）
+    order_var = tk.StringVar(value=PAGE_ORDER_LABELS[1])
     outline_var = tk.BooleanVar(value=True)
     po_frame = ttk.Frame(fmt_frame)
     po_frame.grid(row=0, column=2, padx=(16, 0))
