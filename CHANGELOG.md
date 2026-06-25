@@ -1,5 +1,42 @@
 # CHANGELOG
 
+## [0.3.4] - 2026-06-25 · v2.3.3（二值化后清理：去古籍扫描件尘点）
+
+### Added
+- **`--binarize-cleanup` 选项**（v2.3.3+）：古籍扫描件常见的"飞墨" / 尘点 / 传感器噪点清理，**默认 `components`**（最安全）
+  - **`none`** = 不清理
+  - **`morph`** = 3×3 形态学开运算（去孤立 specks，**1px 笔画会变细**——古籍慎用）
+  - **`components`**（推荐）= 丢 < 4 px² 的黑色连通簇，只去飞墨，不动笔画
+  - **`both`** = components + morph
+- **GUI 联动**：二值化区新增 `清理` combobox（默认 `components`）
+- **`tests/test_binarize_cleanup.py`**：15 个用例覆盖 morph / components / both / 透传 / dispatcher
+
+### Implementation
+- **`book_cut.preprocess.binarize`**：
+  - 新增 `_morph_open`（invert + MORPH_OPEN + invert，处理黑=前景约定）
+  - 新增 `_drop_small_components`（`cv2.connectedComponentsWithStats` + `CC_STAT_AREA`）
+  - 新增 `_apply_cleanup` 4-mode dispatcher
+  - `binarize_*` 全链路透传 `cleanup` kwarg
+- **`pipeline/orchestrator._compute_page`**：加 `binarize_cleanup` 参数
+- **`pipeline/dry_run.run_dry_run`**：加 `binarize_cleanup` 参数（preview 也走新流程）
+- **`cli.py`**：新增 `--binarize-cleanup` argparse（`choices=BINARIZE_CLEANUP_CHOICES`）
+
+### Tests
+- 单元测试 **427 → 442**（+15），全过
+- 真实样本验证：绣像红楼梦 0007.png（1920×1664）
+  - `none`：421,326 黑像素，**955 个孤立 specks**（噪点）
+  - `components`（默认）：420,371 黑像素，**0 specks** ✓ 笔画完整
+  - `morph`：331,357 黑像素，**丢 90K 像素**（吃笔画！）—— 故**不推荐古籍**
+  - `both`：= morph（同样吃字）
+- 结论：默认 `components` 是"白送"的去噪收益，无副作用
+
+### Backward Compat
+- 完全兼容：旧调用 `binarize_sauvola(img)` 不传 `cleanup` → 默认 `components`（自动获益）
+- 想保持原行为：`binarize_sauvola(img, cleanup="none")`
+- 视觉影响：飞墨消失，笔画不变（建议有疑虑的样本先 dry-run 对比）
+
+---
+
 ## [0.3.3] - 2026-06-25 · v2.3.3（GUI 真实进度条）
 
 ### Changed

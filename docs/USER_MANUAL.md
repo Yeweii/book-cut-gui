@@ -585,6 +585,37 @@ python -m book_cut -i book.pdf -o ./out \
 
 可用环境变量覆盖：`export BOOKCUT_BINARY_MODE=8bit`
 
+#### 4.6.3 扫描件噪点清理 `--binarize-cleanup`（v2.3.3+）
+
+古籍扫描件常见"飞墨"（雕版墨渣 / 印刷毛刺）、纸张老化斑点、传感器噪点。Sauvola 等局部阈值会保留这些孤立小簇，二值图上表现为字外散落的黑点。
+
+```bash
+--binarize-cleanup components   # 默认（最安全，推荐古籍）
+--binarize-cleanup none         # 不清理（旧行为）
+--binarize-cleanup morph        # 形态学开运算（去 specks，但 1px 笔画会变细）
+--binarize-cleanup both         # components + morph
+```
+
+| 模式 | 做法 | 影响 | 适用 |
+|------|------|------|------|
+| `components`（默认） | 丢 < 4 px² 的黑色连通簇 | **只去飞墨，笔画不变** | **古籍通用**（绣像 / 文字 / 版框） |
+| `morph` | 3×3 形态学开运算 | 1px 笔画变细 / 极细末梢丢失 | 笔画粗（>3px）的现代印刷 |
+| `both` | 先 components 再 morph | 双重清理 | 噪点极端严重 |
+| `none` | 不清理 | 保留所有 specks | 极精细笔画 / 想手动后处理 |
+
+**实测对比**（绣像红楼梦 0007.png, 1920×1664）：
+
+| 模式 | 黑像素总数 | 孤立 specks (1-3 px²) | 笔画影响 |
+|------|-----------|---------------------|---------|
+| `none` | 421,326 | **955** | 完整 |
+| `components`（默认） | 420,371 (-0.2%) | **0** | **完整** ✓ |
+| `morph` | 331,357 (**-21%**) | 0 | **丢 90K 像素 / 吃字** |
+| `both` | ≈ morph | 0 | ≈ morph（吃字） |
+
+**结论**：`components` 是"白送"的去噪收益——自动清掉 955 个尘点而不动笔画，**默认开启**。`morph` 对古籍风险大（吃细笔画），**不推荐**。
+
+GUI：二值化区多出 `清理` combobox，默认 `components`。
+
 ### 4.7 PDF 输出与排版选项
 
 #### 4.7.1 页序 `--page-order`

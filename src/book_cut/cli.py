@@ -9,6 +9,7 @@ from book_cut.io.page_size import (
     PDF_PAGE_SIZE_CHOICES,
     PDF_PAGE_UNIT_CHOICES,
 )
+from book_cut.preprocess.binarize import BINARIZE_CLEANUP_CHOICES
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -239,6 +240,15 @@ def build_parser() -> argparse.ArgumentParser:
         choices=["none", "otsu", "adaptive", "sauvola"],
         default="none",
         help="二值化算法（默认 none；古籍推荐 sauvola）",
+    )
+    # v2.3.3+：二值化后清理（古籍扫描件去除尘点 / 飞墨）
+    parser.add_argument(
+        "--binarize-cleanup",
+        choices=BINARIZE_CLEANUP_CHOICES,
+        default="components",
+        help="二值化后清理策略（v2.3.3+；默认 components）："
+        "none=不清理 / morph=3×3 形态学开运算（去 specks，1px 笔画变细）/"
+        "components=丢 < 4 px² 黑簇（推荐，最安全）/ both=morph + components",
     )
     # v2.0+：二值化输出模式（默认 1bit，体积 8x 缩减；8bit = v1.9 行为）
     _binary_mode_default = os.environ.get("BOOKCUT_BINARY_MODE", "1bit")

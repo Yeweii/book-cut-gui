@@ -882,6 +882,22 @@ def run_gui() -> None:
         text="1-bit 紧凑输出（体积 8x 缩减）",
         variable=binary_1bit_var,
     ).grid(row=0, column=2, padx=8)
+    # v2.3.3+：古籍扫描件噪点清理（默认 components = 最安全）
+    BINARIZE_CLEANUP_LABELS = ("none", "morph", "components", "both")
+    binarize_cleanup_var = tk.StringVar(value="components")
+    ttk.Label(bin_frame, text="清理:").grid(row=1, column=0, sticky="w", pady=(6, 0))
+    ttk.Combobox(
+        bin_frame,
+        textvariable=binarize_cleanup_var,
+        values=BINARIZE_CLEANUP_LABELS,
+        state="readonly",
+        width=14,
+    ).grid(row=1, column=0, sticky="e", pady=(6, 0), padx=(78, 0))
+    ttk.Label(
+        bin_frame,
+        text="（丢 < 4px² 黑簇，去尘点）",
+        foreground="gray",
+    ).grid(row=1, column=1, columnspan=2, sticky="w", pady=(6, 0))
 
     # v1.8+ dry-run 控件
     dry_frame = ttk.Frame(inner_frame)
@@ -1267,6 +1283,7 @@ def run_gui() -> None:
             "paper_pages": paper_pages_var.get(),
             "binarize": binarize_var.get(),
             "binary_mode": "1bit" if binary_1bit_var.get() else "8bit",
+            "binarize_cleanup": binarize_cleanup_var.get(),  # v2.3.3+
             "format": format_var.get(),
             "pdf": pdf_var.get(),
             "deskew": deskew_var.get(),

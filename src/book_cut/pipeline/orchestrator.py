@@ -344,6 +344,7 @@ def _compute_page(
     crop_mode: str,
     binarize_method: str,
     binary_mode: BinaryMode = "1bit",
+    binarize_cleanup: str = "components",  # v2.3.3+
     crop_config,
     paper_deviation: float,
     split_strategy: str,
@@ -494,7 +495,16 @@ def _compute_page(
     t_bin_start = time.perf_counter() if _TIMING_ENABLED else 0.0
     if binarize_method != "none":
         # v2.0+ binary_mode：默认 "1bit" 输出 1-bit 调色板，PNG/PDF 体积 8x 缩减
-        sub_pages = [binarize(p, binarize_method, binary_mode=binary_mode) for p in sub_pages]
+        # v2.3.3+ cleanup：古籍扫描件噪点清理（默认 components = 丢 < 4 px² 黑簇）
+        sub_pages = [
+            binarize(
+                p,
+                binarize_method,
+                binary_mode=binary_mode,
+                cleanup=binarize_cleanup,
+            )
+            for p in sub_pages
+        ]
     t_bin = time.perf_counter() - t_bin_start if _TIMING_ENABLED else 0.0
 
     # metrics
@@ -809,6 +819,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             crop_mode=crop_mode,
             binarize_method=binarize_method,
             binary_mode=binary_mode,
+            binarize_cleanup=getattr(args, "binarize_cleanup", "components"),
             crop_config=crop_config,
             paper_deviation=paper_deviation,
             split_strategy=args.split,
@@ -839,6 +850,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
         crop_mode=crop_mode,
         binarize_method=binarize_method,
         binary_mode=binary_mode,
+        binarize_cleanup=getattr(args, "binarize_cleanup", "components"),
         crop_config=crop_config,
         paper_deviation=paper_deviation,
         split_strategy=args.split,
@@ -876,6 +888,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             crop_mode=crop_mode,
             binarize_method=binarize_method,
             binary_mode=binary_mode,
+            binarize_cleanup=getattr(args, "binarize_cleanup", "components"),
             crop_config=crop_config,
             paper_deviation=paper_deviation,
             split_strategy=args.split,
