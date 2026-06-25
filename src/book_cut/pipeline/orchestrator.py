@@ -268,8 +268,13 @@ def _crop_pages_from_arrays_with_config(
         from book_cut.detect.manual import apply_manual_crop
 
         out: list = []
+        # v2.3+：奇偶页语义按物理位置判定（与 page_order 解耦）
+        # LTR：左=even(i=0)  RTL：左=even(i=1，flip 后左在索引 1)
         for i, a in enumerate(sub_arrs):
-            is_even = (i == 0)  # split 输出 [左, 右] → 左=even, 右=odd
+            if page_order == "rtl":
+                is_even = (i == 1)
+            else:
+                is_even = (i == 0)
             cropped = apply_manual_crop(a, config, is_even=is_even)
             out.append(Image.fromarray(cropped, mode="L"))
         return out
@@ -345,6 +350,7 @@ def _compute_page(
     half_offset: int,
     use_morph: bool,
     is_sampled_page: bool,
+    global_page_no: int = 1,
     preprocess_chain: list[str] | None = None,
     preprocess_quality: str = "balanced",
     trim_source: str = "gray",
@@ -425,8 +431,21 @@ def _compute_page(
         from book_cut.detect.manual import apply_manual_crop
 
         sub_pages = []
+        # v2.3+：奇偶页语义按"物理位置"判定（与 page_order 解耦）
+        #   - 左物理页（gutter 在右）= even（inner=右 padding, outer=左 padding）
+        #   - 右物理页（gutter 在左）= odd （inner=左 padding, outer=右 padding）
+        # LTR：array = [左, 右] → 左 = i=0 = even
+        # RTL：array 已 flip 成 [右, 左] → 左物理页在 i=1 = even
+        # 单页输入（split=none）：sub_arrs 只有 1 元素，物理位置无意义，
+        # 必须按"全局页号"判定奇偶（1-based，奇数=odd，偶数=even）。
         for i, a in enumerate(sub_arrs):
-            is_even = (i == 0)  # split 输出 [左, 右] → 左=even, 右=odd
+            if len(sub_arrs) == 1:
+                # v2.3.1+：单页输入 → 用全局页号（1-based）判定
+                is_even = (global_page_no % 2 == 0)
+            elif page_order == "rtl":
+                is_even = (i == 1)
+            else:
+                is_even = (i == 0)
             cropped = apply_manual_crop(a, crop_config, is_even=is_even)
             sub_pages.append(Image.fromarray(cropped, mode="L"))
     elif is_sampled_page:
@@ -609,7 +628,10 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
                 "图片输出保持原分辨率"
             )
         else:
-            if pdf_page_size in {"a4", "a5", "letter", "legal", "custom"}:
+            # 预设（a4/a5/letter/legal/kpw6）+ custom 都走 parse_page_size_px
+            # 未来加新预设只需改 PRESETS / PDF_PAGE_SIZE_CHOICES
+            from book_cut.io.page_size import PDF_PAGE_SIZE_CHOICES as _PDF_SIZES
+            if pdf_page_size in _PDF_SIZES and pdf_page_size not in {"keep", "max", "first"}:
                 target_size = parse_page_size_px(
                     pdf_page_size,
                     dim=getattr(args, "pdf_page_dim", None),
@@ -657,13 +679,24 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
     crop_config = _build_crop_config(args, sampled_for_paper)
     # sampled 在主循环中被 chain 复用，不能 del
 
-    # v2.2+：--crop manual 时，crop_config 改载 ManualCropProfile（覆盖 auto）
+    # v2.3+：--crop manual 时，crop_config 改载 ManualCropProfile（双 PageCropProfile）
     if crop_mode == "manual":
-        from book_cut.detect.manual import ManualCropProfile, parse_manual_padding
+        from book_cut.detect.manual import (
+            ManualCropProfile,
+            PageCropProfile,
+            parse_manual_padding,
+        )
 
         manual_preset_path = getattr(args, "manual_preset", None)
         manual_odd_padding = getattr(args, "manual_odd_padding", None)
-        manual_mirror_even = bool(getattr(args, "manual_mirror_even", True))
+        manual_even_padding = getattr(args, "manual_even_padding", None)
+        # v2.3+ 废弃：仅用于兼容老 CLI 调用
+        legacy_mirror = getattr(args, "manual_mirror_even", None)
+        if legacy_mirror is not None:
+            print(
+                "[WARN] --manual-mirror-even 已废弃（v2.3+）；"
+                "请改用 --manual-even-padding。当前参数将被忽略。"
+            )
 
         if manual_preset_path:
             crop_config = ManualCropProfile.from_json(
@@ -672,20 +705,24 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             print(f"[INFO] 加载 manual preset: {manual_preset_path}")
         elif manual_odd_padding:
             t, b, i, o = parse_manual_padding(manual_odd_padding)
-            crop_config = ManualCropProfile(
-                top=t, bottom=b, inner=i, outer=o,
-                mirror_even=manual_mirror_even,
-            )
+            odd = PageCropProfile(top=t, bottom=b, inner=i, outer=o)
+            if manual_even_padding:
+                t2, b2, i2, o2 = parse_manual_padding(manual_even_padding)
+                even = PageCropProfile(top=t2, bottom=b2, inner=i2, outer=o2)
+            else:
+                # 默认从奇页镜像生成（v1 mirror_even=True 等价）
+                even = PageCropProfile(top=t, bottom=b, inner=o, outer=i)
+            crop_config = ManualCropProfile(odd_page=odd, even_page=even)
             print(
-                f"[INFO] manual crop: T={t}, B={b}, I={i}, O={o}, "
-                f"mirror_even={manual_mirror_even}"
+                f"[INFO] manual crop: odd=(T={t},B={b},I={i},O={o}) "
+                f"even=(T={even.top},B={even.bottom},I={even.inner},O={even.outer})"
             )
         else:
             raise ValueError(
                 "--crop manual 需要 --manual-odd-padding 或 --manual-preset 之一"
             )
 
-        # 可选：运行时保存为 preset
+        # 可选：运行时保存为 preset（v2.3+ 始终输出 v2 JSON）
         save_preset_path = getattr(args, "manual_save_preset", None)
         if save_preset_path:
             Path(save_preset_path).write_text(crop_config.to_json())
@@ -808,6 +845,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
         half_offset=getattr(args, "half_offset", 0),
         use_morph=use_morph,
         is_sampled_page=True,
+        global_page_no=1,  # 第一页（1-based）
         preprocess_chain=preprocess_chain,
         preprocess_quality=preprocess_quality,
         trim_source=trim_source,
@@ -844,6 +882,7 @@ def run_pipeline(args: argparse.Namespace, cancel_event: threading.Event | None 
             half_offset=getattr(args, "half_offset", 0),
             use_morph=use_morph,
             is_sampled_page=(i < sampled_remaining),
+            global_page_no=i + 2,  # first_page=1，后续 i=0→2, i=1→3, ...
             preprocess_chain=preprocess_chain,
             preprocess_quality=preprocess_quality,
             trim_source=trim_source,

@@ -1,5 +1,58 @@
 # CHANGELOG
 
+## [0.3.2] - 2026-06-25 · v2.3.3（PDF 页面尺寸：Kindle KPW6）
+
+### Added
+- **`--pdf-page-size kpw6`**（v2.3.3+）：Amazon Kindle Paperwhite 6（11 代，2021 年）原生页面尺寸
+  - 6.8" E Ink Carta 1200 @ 300 ppi → display 1648×1232 px = **139.5 × 104.3 mm**
+  - 96 DPI 换算 = (527, 394) px
+  - 长宽比 4:3 = 1.3377（与设备 aspect ratio 一致）
+  - 适合"扫描件 → 发 Kindle"工作流：CLI / GUI 都可用
+- **GUI 联动**：`PDF 页面尺寸` combobox 新增 `KPW6 (6.8")` 项
+- **测试** `test_pdf_page_size.py::test_t4b_parse_kpw6`：精确尺寸 + 长宽比双断言
+- **`pipeline/orchestrator.py` 重构**：消除预设硬编码集 `{"a4","a5","letter","legal","custom"}`，改为从 `PDF_PAGE_SIZE_CHOICES` 动态派生（v2.3.3+ 未来加新 preset 只需改 `PRESETS` + `PDF_PAGE_SIZE_CHOICES` 两处，不再需要同步 orchestrator）
+
+### Backward Compat
+- 完全兼容 v2.3.x：旧 preset 名 / 老 PDF 配置文件不动
+- 默认行为不变（`--pdf-page-size keep`）
+
+### Tests
+- `tests/test_pdf_page_size.py` +1 用例（T4b kpw6 尺寸）
+- 测试套件 **434 → 435**（+1），全过，ruff 0 错（修改文件）
+- 真实样本 smoke：76 页 sample PDF + `--pdf-page-size kpw6` → 152 张子页，mediabox 395.25×295.50 pt = 139.4×104.2 mm（与目标 ±0.1 mm）
+
+---
+
+## [0.3.1] - 2026-06-25 · v2.3（独立奇偶页裁切）
+
+### Changed
+- **`ManualCropProfile` 重构**：用 `odd_page` + `even_page` 两个 `PageCropProfile` 替代旧的 `mirror_even` 镜像
+  - 实测古籍奇偶页常非物理对称（鱼尾形态、版心位置、版框残缺），镜像错位 → 独立裁切更准
+  - `apply_manual_crop(arr, profile, is_even)` 简化为按 `is_even` 选 profile
+
+### Added
+- **JSON schema v2**：`{"odd_page": {...}, "even_page": {...}, "version": 2}`
+- **新 `PageCropProfile` dataclass**：`top/bottom/inner/outer` 4 字段
+- **CLI `--manual-even-padding "T,B,I,O"`**：偶页 padding 独立指定
+- **GUI 双 Spinbox 组 + 双拖框按钮**："📐 拖奇页框" / "📐 拖偶页框"
+- **新 preset 示例** `samples/crop_profiles/v2_独立奇偶示例_尸子卷.json`
+
+### Deprecated
+- **`--manual-mirror-even`**：v2.3+ 已废弃，传值时 warn 后忽略，请改用 `--manual-even-padding`
+
+### Backward Compat
+- `from_json` 自动迁移 v1 preset：
+  - `mirror_even=True` → `even_page = {T,B,outer,inner}`（镜像）
+  - `mirror_even=False` → `even_page = odd_page`（相同）
+- 旧 JSON 文件不动；新 `to_json()` 始终输出 v2 格式
+
+### Tests
+- `tests/test_manual_crop.py` +6 个用例：独立裁切 / v1 mirror / v1 no-mirror / v2 round-trip / orchestrator 集成 / GUI Spinbox 隔离
+- `tests/test_gui_manual_layout.py::test_apply_profile_to_vars` 改为按 `is_even` 选择 odd/even 写入
+- 测试套件 **289 → 295**（+6 net），全过
+
+---
+
 ## [0.3.0] - 2026-06-24 · v2.2（手动裁切工具）
 
 ### Added

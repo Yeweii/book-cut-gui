@@ -17,6 +17,7 @@ from PIL import Image
 from book_cut import __version__
 from book_cut.detect.manual import (
     ManualCropProfile,
+    PageCropProfile,
 )
 from book_cut.gui_canvas import CropCanvas
 from book_cut.io.page_size import (
@@ -30,6 +31,7 @@ PAGE_ORDER_LABELS: tuple[str, ...] = ("先左后右", "先右后左")
 PAGE_ORDER_MAP: dict[str, str] = {"先左后右": "ltr", "先右后左": "rtl"}
 
 # v1.7：PDF 页面统一尺寸（GUI 显示用中文，CLI 用 token）
+# v2.3.3+：加 "KPW6 (6.8\")"——Amazon Kindle Paperwhite 6 屏幕尺寸
 PDF_PAGE_SIZE_LABELS: tuple[str, ...] = (
     "保持原图",
     "取最大",
@@ -38,6 +40,7 @@ PDF_PAGE_SIZE_LABELS: tuple[str, ...] = (
     "A5",
     "Letter",
     "Legal",
+    "KPW6 (6.8\")",
     "自定义",
 )
 PDF_PAGE_SIZE_MAP: dict[str, str] = dict(zip(PDF_PAGE_SIZE_LABELS, PDF_PAGE_SIZE_CHOICES, strict=True))
@@ -205,18 +208,20 @@ def apply_profile_to_vars(
     bottom_var: tk.IntVar,
     inner_var: tk.IntVar,
     outer_var: tk.IntVar,
-    mirror_var: tk.BooleanVar,
+    is_even: bool = False,
 ) -> None:
-    """把 ManualCropProfile 的字段写到 4 个 IntVar + 1 个 BoolVar。
+    """把 ManualCropProfile 当前侧（odd/even）的 4 padding 写到 IntVar（v2.3+）。
 
     v2.2.2+ 抽出来的纯函数（无 Tk widget 创建），便于单测：
     拖框 Toplevel"应用"按钮 → 读 canvas.get_profile() → apply_profile_to_vars。
+    v2.3+ 改为按 ``is_even`` 选择 ``odd_page`` 或 ``even_page`` 写入；移除
+    ``mirror_var`` 参数（v2.3+ 镜像语义已废弃）。
     """
-    top_var.set(profile.top)
-    bottom_var.set(profile.bottom)
-    inner_var.set(profile.inner)
-    outer_var.set(profile.outer)
-    mirror_var.set(profile.mirror_even)
+    p = profile.even_page if is_even else profile.odd_page
+    top_var.set(p.top)
+    bottom_var.set(p.bottom)
+    inner_var.set(p.inner)
+    outer_var.set(p.outer)
 
 
 # ----------------------------------------------------------------------------
@@ -254,21 +259,64 @@ def run_gui() -> None:
     except tk.TclError:
         pass
 
-    # ---- 布局 ----
+    # ---- v2.3.2+：最外层滚动条 ----
+    # 整窗 = Canvas + Scrollbar，inner_frame 承载所有原 root 内容
+    root.columnconfigure(0, weight=1)
+    root.rowconfigure(0, weight=1)
+    outer_canvas = tk.Canvas(root, highlightthickness=0)
+    outer_canvas.grid(row=0, column=0, sticky="nsew")
+    outer_scroll = ttk.Scrollbar(root, orient="vertical", command=outer_canvas.yview)
+    outer_scroll.grid(row=0, column=1, sticky="ns")
+    outer_canvas.configure(yscrollcommand=outer_scroll.set)
+
+    inner_frame = ttk.Frame(outer_canvas)
+    inner_window = outer_canvas.create_window((0, 0), window=inner_frame, anchor="nw")
+
+    def _on_outer_canvas_configure(event: object) -> None:
+        # 让 inner_frame 跟随 canvas 宽度
+        outer_canvas.itemconfig(inner_window, width=event.width)  # type: ignore[attr-defined]
+
+    def _on_inner_frame_configure(_event: object) -> None:
+        outer_canvas.configure(scrollregion=outer_canvas.bbox("all"))
+
+    outer_canvas.bind("<Configure>", _on_outer_canvas_configure)
+    inner_frame.bind("<Configure>", _on_inner_frame_configure)
+
+    def _on_mousewheel(event: object) -> None:
+        """跨平台鼠标滚轮：macOS 用 <MouseWheel> delta，Win/Linux 用 <Button-4/5>。"""
+        if sys.platform == "darwin":
+            # macOS：delta 正负取决于"自然滚动"开关
+            # 不区分自然滚动：让内容随手指方向（滚动轮上滚 = 看到上面）
+            outer_canvas.yview_scroll(-1 * getattr(event, "delta", 0), "units")
+        else:
+            num = getattr(event, "num", None)
+            if num == 4:
+                outer_canvas.yview_scroll(-1, "units")
+            elif num == 5:
+                outer_canvas.yview_scroll(1, "units")
+            else:
+                # Windows：delta=±120
+                outer_canvas.yview_scroll(-1 * (getattr(event, "delta", 0) // 120), "units")
+
+    outer_canvas.bind_all("<MouseWheel>", _on_mousewheel)
+    outer_canvas.bind_all("<Button-4>", _on_mousewheel)
+    outer_canvas.bind_all("<Button-5>", _on_mousewheel)
+
+    # ---- 布局（v2.3.2+：所有原 root.grid 改为 inner_frame.grid） ----
     pad = {"padx": 8, "pady": 4}
     # 列权重：col0=标签固定宽度 / col1=内容扩展 / col2=按钮固定宽度
-    root.columnconfigure(0, weight=0, minsize=70)
-    root.columnconfigure(1, weight=1)
-    root.columnconfigure(2, weight=0, minsize=120)
+    inner_frame.columnconfigure(0, weight=0, minsize=70)
+    inner_frame.columnconfigure(1, weight=1)
+    inner_frame.columnconfigure(2, weight=0, minsize=120)
 
     # 标题
-    ttk.Label(root, text="古籍双页切分工具", font=("Helvetica", 14, "bold")).grid(
+    ttk.Label(inner_frame, text="古籍双页切分工具", font=("Helvetica", 14, "bold")).grid(
         row=0, column=0, columnspan=3, pady=(12, 8)
     )
 
     # 输入
-    ttk.Label(root, text="输入路径:").grid(row=1, column=0, sticky="e", **pad)
-    ttk.Entry(root, textvariable=input_var).grid(row=1, column=1, sticky="ew", **pad)
+    ttk.Label(inner_frame, text="输入路径:").grid(row=1, column=0, sticky="e", **pad)
+    ttk.Entry(inner_frame, textvariable=input_var).grid(row=1, column=1, sticky="ew", **pad)
 
     def browse_input() -> None:
         """统一选择 PDF / 图片文件 或 包含它们的文件夹（v2.2.5+）。
@@ -339,7 +387,7 @@ def run_gui() -> None:
         win.bind("<Return>", lambda _e: _confirm())
         win.bind("<Escape>", lambda _e: win.destroy())
 
-    ttk.Button(root, text="浏览…", command=browse_input).grid(row=1, column=2, **pad)
+    ttk.Button(inner_frame, text="浏览…", command=browse_input).grid(row=1, column=2, **pad)
 
     # v1.6+ E1b：input 变化时，若 output 为空则自动建议
     def _on_input_change(*_args: object) -> None:
@@ -352,26 +400,26 @@ def run_gui() -> None:
     input_var.trace_add("write", _on_input_change)
 
     # 输出
-    ttk.Label(root, text="输出目录:").grid(row=2, column=0, sticky="e", **pad)
-    ttk.Entry(root, textvariable=output_var).grid(row=2, column=1, sticky="ew", **pad)
+    ttk.Label(inner_frame, text="输出目录:").grid(row=2, column=0, sticky="e", **pad)
+    ttk.Entry(inner_frame, textvariable=output_var).grid(row=2, column=1, sticky="ew", **pad)
 
     def browse_output() -> None:
         path = filedialog.askdirectory(title="选择输出目录")
         if path:
             output_var.set(path)
 
-    ttk.Button(root, text="浏览…", command=browse_output).grid(row=2, column=2, **pad)
+    ttk.Button(inner_frame, text="浏览…", command=browse_output).grid(row=2, column=2, **pad)
 
     # 切分策略
-    ttk.Label(root, text="预处理:").grid(row=3, column=0, sticky="e", **pad)
-    pp_frame = ttk.Frame(root)
+    ttk.Label(inner_frame, text="预处理:").grid(row=3, column=0, sticky="e", **pad)
+    pp_frame = ttk.Frame(inner_frame)
     pp_frame.grid(row=3, column=1, sticky="w", **pad)
     ttk.Checkbutton(pp_frame, text="倾斜校正（deskew）", variable=deskew_var).grid(
         row=0, column=0
     )
 
-    ttk.Label(root, text="切分策略:").grid(row=4, column=0, sticky="e", **pad)
-    split_frame = ttk.Frame(root)
+    ttk.Label(inner_frame, text="切分策略:").grid(row=4, column=0, sticky="e", **pad)
+    split_frame = ttk.Frame(inner_frame)
     split_frame.grid(row=4, column=1, sticky="w", **pad)
     for i, (val, label) in enumerate(
         [("gutter", "中缝（推荐）"), ("border", "版框线"), ("half", "对半"), ("none", "不切分")]
@@ -381,8 +429,8 @@ def run_gui() -> None:
         )
 
     # 裁切
-    ttk.Label(root, text="单页裁切:").grid(row=5, column=0, sticky="e", **pad)
-    crop_frame = ttk.Frame(root)
+    ttk.Label(inner_frame, text="单页裁切:").grid(row=5, column=0, sticky="e", **pad)
+    crop_frame = ttk.Frame(inner_frame)
     crop_frame.grid(row=5, column=1, sticky="w", **pad)
     for i, (val, label) in enumerate(
         [("none", "不裁"), ("trim", "切白边"), ("border", "版框内裁"), ("manual", "手动（拖框）")]
@@ -441,7 +489,7 @@ def run_gui() -> None:
 
     # v2.2+：Manual Crop 面板（拖框 + 4 个 padding + preset 加载/保存）
     # v2.2.1+：行号独立（不再与二值化撞 row=6），全中文 + 展开/收起按钮
-    manual_frame = ttk.LabelFrame(root, text="手动裁切（v2.2+，替代自动裁切）")
+    manual_frame = ttk.LabelFrame(inner_frame, text="手动裁切（v2.2+，替代自动裁切）")
     manual_frame.grid(row=6, column=0, columnspan=3, sticky="ew", **pad)
 
     # 展开/收起按钮（v2.2.1+）：默认展开；用户可折叠节省空间
@@ -467,37 +515,79 @@ def run_gui() -> None:
     )
     manual_expand_btn.grid(row=0, column=2, sticky="e", padx=(0, 8), pady=(2, 0))
 
-    # 4 个 padding（中缝 = inner / 外侧 = outer）
+    # v2.3+：奇偶页两组独立 padding（中缝 = inner / 外侧 = outer）
     manual_pad_frame = ttk.Frame(manual_frame)
     manual_pad_frame.grid(row=1, column=0, columnspan=3, sticky="w", **pad)
-    ttk.Label(manual_pad_frame, text="上:").grid(row=0, column=0)
+
+    # ---- 奇页（split 右，inner=左 outer=右） ----
+    ttk.Label(manual_pad_frame, text="奇页(右):", foreground="blue").grid(
+        row=0, column=0, sticky="w"
+    )
+    ttk.Label(manual_pad_frame, text="上:").grid(row=0, column=1)
     manual_top_var = tk.IntVar(value=50)
     ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_top_var).grid(
-        row=0, column=1, padx=(2, 8)
+        row=0, column=2, padx=(2, 8)
     )
-    ttk.Label(manual_pad_frame, text="下:").grid(row=0, column=2)
+    ttk.Label(manual_pad_frame, text="下:").grid(row=0, column=3)
     manual_bottom_var = tk.IntVar(value=40)
     ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_bottom_var).grid(
-        row=0, column=3, padx=(2, 8)
+        row=0, column=4, padx=(2, 8)
     )
-    ttk.Label(manual_pad_frame, text="中缝:").grid(row=0, column=4)
+    ttk.Label(manual_pad_frame, text="中缝:").grid(row=0, column=5)
     manual_inner_var = tk.IntVar(value=80)
     ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_inner_var).grid(
-        row=0, column=5, padx=(2, 8)
+        row=0, column=6, padx=(2, 8)
     )
-    ttk.Label(manual_pad_frame, text="外侧:").grid(row=0, column=6)
+    ttk.Label(manual_pad_frame, text="外侧:").grid(row=0, column=7)
     manual_outer_var = tk.IntVar(value=30)
     ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_outer_var).grid(
-        row=0, column=7, padx=(2, 8)
+        row=0, column=8, padx=(2, 8)
+    )
+    ttk.Button(
+        manual_pad_frame, text="📐 拖奇页框", width=10,
+        command=lambda: _open_sample_page_for(is_even=False),
+    ).grid(row=0, column=9, padx=(8, 0))
+
+    # 横向分隔线
+    ttk.Separator(manual_pad_frame, orient="horizontal").grid(
+        row=1, column=0, columnspan=10, sticky="ew", pady=4
     )
 
-    # 镜像 + 预设按钮
+    # ---- 偶页（split 左，inner=右 outer=左） ----
+    ttk.Label(manual_pad_frame, text="偶页(左):", foreground="purple").grid(
+        row=2, column=0, sticky="w"
+    )
+    ttk.Label(manual_pad_frame, text="上:").grid(row=2, column=1)
+    manual_even_top_var = tk.IntVar(value=50)
+    ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_even_top_var).grid(
+        row=2, column=2, padx=(2, 8)
+    )
+    ttk.Label(manual_pad_frame, text="下:").grid(row=2, column=3)
+    manual_even_bottom_var = tk.IntVar(value=40)
+    ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_even_bottom_var).grid(
+        row=2, column=4, padx=(2, 8)
+    )
+    ttk.Label(manual_pad_frame, text="中缝:").grid(row=2, column=5)
+    manual_even_inner_var = tk.IntVar(value=30)
+    ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_even_inner_var).grid(
+        row=2, column=6, padx=(2, 8)
+    )
+    ttk.Label(manual_pad_frame, text="外侧:").grid(row=2, column=7)
+    manual_even_outer_var = tk.IntVar(value=80)
+    ttk.Spinbox(manual_pad_frame, from_=0, to=9999, width=6, textvariable=manual_even_outer_var).grid(
+        row=2, column=8, padx=(2, 8)
+    )
+    ttk.Button(
+        manual_pad_frame, text="📐 拖偶页框", width=10,
+        command=lambda: _open_sample_page_for(is_even=True),
+    ).grid(row=2, column=9, padx=(8, 0))
+
+    # 预设按钮行（v2.3+：移除偶页镜像 checkbox，已废弃）
     manual_btn_frame = ttk.Frame(manual_frame)
     manual_btn_frame.grid(row=2, column=0, columnspan=3, sticky="w", **pad)
-    manual_mirror_var = tk.BooleanVar(value=True)
-    ttk.Checkbutton(
-        manual_btn_frame, text="偶页自动镜像（中缝↔外侧）",
-        variable=manual_mirror_var,
+    ttk.Label(
+        manual_btn_frame, text="（v2.3+：偶页已独立，无需镜像）",
+        foreground="gray",
     ).grid(row=0, column=0, padx=(0, 16))
 
     def _save_manual_preset() -> None:
@@ -509,11 +599,18 @@ def run_gui() -> None:
         if not path:
             return
         prof = ManualCropProfile(
-            top=manual_top_var.get(),
-            bottom=manual_bottom_var.get(),
-            inner=manual_inner_var.get(),
-            outer=manual_outer_var.get(),
-            mirror_even=manual_mirror_var.get(),
+            odd_page=PageCropProfile(
+                top=manual_top_var.get(),
+                bottom=manual_bottom_var.get(),
+                inner=manual_inner_var.get(),
+                outer=manual_outer_var.get(),
+            ),
+            even_page=PageCropProfile(
+                top=manual_even_top_var.get(),
+                bottom=manual_even_bottom_var.get(),
+                inner=manual_even_inner_var.get(),
+                outer=manual_even_outer_var.get(),
+            ),
         )
         Path(path).write_text(prof.to_json())
         messagebox.showinfo("已保存", f"预设已保存到\n{path}")
@@ -530,11 +627,16 @@ def run_gui() -> None:
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("加载失败", f"预设解析失败：\n{e}")
             return
-        manual_top_var.set(prof.top)
-        manual_bottom_var.set(prof.bottom)
-        manual_inner_var.set(prof.inner)
-        manual_outer_var.set(prof.outer)
-        manual_mirror_var.set(prof.mirror_even)
+        # 奇页
+        manual_top_var.set(prof.odd_page.top)
+        manual_bottom_var.set(prof.odd_page.bottom)
+        manual_inner_var.set(prof.odd_page.inner)
+        manual_outer_var.set(prof.odd_page.outer)
+        # 偶页
+        manual_even_top_var.set(prof.even_page.top)
+        manual_even_bottom_var.set(prof.even_page.bottom)
+        manual_even_inner_var.set(prof.even_page.inner)
+        manual_even_outer_var.set(prof.even_page.outer)
 
     ttk.Button(manual_btn_frame, text="加载预设…", command=_load_manual_preset).grid(
         row=0, column=1, padx=4
@@ -543,9 +645,9 @@ def run_gui() -> None:
         row=0, column=2, padx=4
     )
 
-    # v2.2.2+：选择样本页 → 弹 Toplevel 拖框 → 自动算 padding 写回 Spinbox
-    def _open_sample_page() -> None:
-        """选图片 → 弹拖框 Toplevel → 应用后更新 4 个 padding IntVar。"""
+    # v2.3+：选择样本页 → 弹 Toplevel 拖框 → 自动算 padding 写回对应奇/偶 IntVar
+    def _open_sample_page_for(is_even: bool) -> None:
+        """选图片 → 弹拖框 Toplevel → 应用后更新奇页或偶页的 4 个 padding IntVar。"""
         path = filedialog.askopenfilename(
             title="选择样本页（用于拖框计算 padding）",
             filetypes=[
@@ -563,31 +665,30 @@ def run_gui() -> None:
         except Exception as e:  # noqa: BLE001
             messagebox.showerror("加载失败", f"图片加载失败：\n{e}")
             return
-        _show_sample_crop_window(img)
+        _show_sample_crop_window(img, is_even=is_even)
 
-    def _show_sample_crop_window(img: Image.Image) -> None:
-        """弹 Toplevel 显示图片 + CropCanvas，应用时回写 manual_*_var。"""
+    def _show_sample_crop_window(img: Image.Image, is_even: bool = False) -> None:
+        """弹 Toplevel 显示图片 + CropCanvas，应用时回写 manual_*_var。
+
+        v2.3+：按 ``is_even`` 决定编辑奇页还是偶页的 4 个 IntVar；
+        移除奇/偶页 toggle radio（v2.3+ 双拖框按钮已分流）。
+        """
         win = tk.Toplevel(root)
-        win.title("拖框计算 padding（双击重置；点击'应用'写回主窗口）")
-        win.geometry("1000x860")  # v2.2.4+ 调高 40px 让底部"应用"按钮更稳
+        side_label = "偶页（左）" if is_even else "奇页（右）"
+        win.title(f"拖框计算 padding - {side_label}（双击重置；点击'应用'写回主窗口）")
+        win.geometry("1000x820")  # v2.3+ 去掉 radio 高度
 
-        # 顶部工具栏：奇/偶页 toggle + 当前样本尺寸
+        # 顶部工具栏：当前编辑侧 + 样本尺寸
         toolbar = ttk.Frame(win)
         toolbar.pack(side="top", fill="x", padx=8, pady=6)
-        is_even_var = tk.BooleanVar(value=False)
-        ttk.Radiobutton(
-            toolbar, text="奇页（inner=左，outer=右）", variable=is_even_var, value=False
+        ttk.Label(
+            toolbar,
+            text=f"正在编辑：{side_label}（inner={'右' if is_even else '左'}，outer={'左' if is_even else '右'}）",
+            foreground="purple" if is_even else "blue",
         ).pack(side="left")
-        ttk.Radiobutton(
-            toolbar, text="偶页（inner=右，outer=左）", variable=is_even_var, value=True
-        ).pack(side="left", padx=(8, 16))
         ttk.Label(
             toolbar, text=f"样本尺寸: {img.size[0]} × {img.size[1]}", foreground="gray"
         ).pack(side="left", padx=(16, 0))
-
-        # 缩放按钮（v2.2.3+）：方便查看大图全貌 / 局部放大精确拖框
-        zoom_label = ttk.Label(toolbar, text="缩放: ", foreground="gray")
-        zoom_label.pack(side="left", padx=(24, 0))
 
         # 缩放比例显示（更新由 _update_zoom_label 维护）
         zoom_pct_var = tk.StringVar(value="100%")
@@ -596,7 +697,7 @@ def run_gui() -> None:
             zoom_pct_var.set(f"{int(canvas.get_scale() * 100)}%")
 
         ttk.Button(toolbar, text="适应窗口", width=8, command=lambda: _on_fit()).pack(
-            side="left", padx=(8, 2)
+            side="left", padx=(24, 2)
         )
         ttk.Button(toolbar, text="放大", width=6, command=lambda: _on_zoom_in()).pack(
             side="left", padx=2
@@ -604,37 +705,51 @@ def run_gui() -> None:
         ttk.Button(toolbar, text="缩小", width=6, command=lambda: _on_zoom_out()).pack(
             side="left", padx=2
         )
-        # v2.2.4+ 移除"100%" 按钮（与右边百分比 label 重复，看起来像空白按钮）；
-        # 实际大小（1.0）用"适应窗口"覆盖——想看原图大小就拉到 100% 也方便。
         ttk.Label(toolbar, textvariable=zoom_pct_var, foreground="gray", width=6).pack(
             side="left", padx=(4, 0)
         )
 
-        # v2.2.7+ "应用" 按钮单独一行（apply_bar），紧贴 toolbar 下方。
-        # v2.2.6 把"应用"塞进 toolbar 右侧被挤成 1x1（中文 radio 占满空间）；
-        # v2.2.4 放最底又被 canvas expand 挤出可见区。
-        # 单独一行保证固定高、恒可见、最醒目。
-
-        # v2.2.7.2+ 关键：apply_bar 先 pack(side="bottom") 占住底部，
-        # 后面 canvas_frame.pack(side="top", expand=True) 只能拿到中间剩余空间。
-        # Tk pack 语义：top expand 抢占剩余空间，bottom 项要"先到先得"——
-        # 如果 canvas 先 pack(expand=True) 会把 apply_bar 挤掉，bug 复现。
+        # v2.2.7.2+ 关键：apply_bar 先 pack(side="bottom") 占住底部
         apply_bar = ttk.Frame(win)
         apply_bar.pack(side="bottom", fill="x", padx=8, pady=(4, 8))
         ttk.Separator(apply_bar, orient="horizontal").pack(side="top", fill="x")
 
         # 初始 profile：从当前 manual_*_var 读（保留用户已设值）
-        initial_profile = ManualCropProfile(
-            top=manual_top_var.get(),
-            bottom=manual_bottom_var.get(),
-            inner=manual_inner_var.get(),
-            outer=manual_outer_var.get(),
-            mirror_even=manual_mirror_var.get(),
-            source_size=img.size,
-        )
+        # v2.3+：构造双 PageCropProfile，两侧都从对应 IntVar 填
+        if is_even:
+            current_p = PageCropProfile(
+                top=manual_even_top_var.get(),
+                bottom=manual_even_bottom_var.get(),
+                inner=manual_even_inner_var.get(),
+                outer=manual_even_outer_var.get(),
+            )
+            other_p = PageCropProfile(
+                top=manual_top_var.get(),
+                bottom=manual_bottom_var.get(),
+                inner=manual_inner_var.get(),
+                outer=manual_outer_var.get(),
+            )
+            initial_profile = ManualCropProfile(
+                odd_page=other_p, even_page=current_p, source_size=img.size,
+            )
+        else:
+            current_p = PageCropProfile(
+                top=manual_top_var.get(),
+                bottom=manual_bottom_var.get(),
+                inner=manual_inner_var.get(),
+                outer=manual_outer_var.get(),
+            )
+            other_p = PageCropProfile(
+                top=manual_even_top_var.get(),
+                bottom=manual_even_bottom_var.get(),
+                inner=manual_even_inner_var.get(),
+                outer=manual_even_outer_var.get(),
+            )
+            initial_profile = ManualCropProfile(
+                odd_page=current_p, even_page=other_p, source_size=img.size,
+            )
 
         # Canvas 容器（含 Scrollbar）
-        # v2.2.7.2+ 关键：canvas_frame.pack(expand=True) 在 apply_bar.pack() **之后**调用。
         canvas_frame = ttk.Frame(win)
         canvas_frame.pack(side="top", fill="both", expand=True, padx=8, pady=4)
         y_scroll = ttk.Scrollbar(canvas_frame, orient="vertical")
@@ -645,8 +760,7 @@ def run_gui() -> None:
             canvas_frame,
             img,
             profile=initial_profile,
-            is_even=is_even_var.get(),
-            mirror_even=manual_mirror_var.get(),
+            is_even=is_even,  # v2.3+ 无 mirror_even 参数
         )
         canvas.pack(side="left", fill="both", expand=True)
         canvas.config(yscrollcommand=y_scroll.set, xscrollcommand=x_scroll.set)
@@ -674,24 +788,29 @@ def run_gui() -> None:
         win.update_idletasks()
         win.after(50, _on_fit)
 
-        # 奇/偶页 → canvas.set_is_even
-        def _sync_is_even(*_a: object) -> None:
-            canvas.set_is_even(is_even_var.get())
-
-        is_even_var.trace_add("write", _sync_is_even)
-
         # apply_bar 已在 toolbar 之后先 pack(side="bottom") 占住底部（v2.2.7.2+）。
-        # 这里只加按钮（需要 canvas 已存在）。
+        # v2.3+：移除 is_even_var toggle（已分流到两个独立拖框按钮）；
+        # 应用回调直接按 is_even 写对应 4 个 IntVar。
         def _on_apply() -> None:
             prof = canvas.get_profile()
-            apply_profile_to_vars(
-                prof,
-                manual_top_var,
-                manual_bottom_var,
-                manual_inner_var,
-                manual_outer_var,
-                manual_mirror_var,
-            )
+            if is_even:
+                apply_profile_to_vars(
+                    prof,
+                    manual_even_top_var,
+                    manual_even_bottom_var,
+                    manual_even_inner_var,
+                    manual_even_outer_var,
+                    is_even=True,
+                )
+            else:
+                apply_profile_to_vars(
+                    prof,
+                    manual_top_var,
+                    manual_bottom_var,
+                    manual_inner_var,
+                    manual_outer_var,
+                    is_even=False,
+                )
             win.destroy()
 
         apply_row = ttk.Frame(apply_bar)
@@ -703,13 +822,9 @@ def run_gui() -> None:
             apply_row, text="✓ 应用", width=10, command=lambda: _on_apply()
         ).pack(side="right", padx=(4, 8), pady=2)
 
-        # 关窗时也清回调（避免 trace 引用悬空）
-        win.bind(
-            "<Destroy>",
-            lambda _e: (is_even_var.trace_remove("write", _sync_is_even) if is_even_var.trace_info() else None),
-        )
-
-    ttk.Button(manual_btn_frame, text="选择样本页…", command=_open_sample_page).grid(
+    # v2.3+：通用样本页按钮（默认奇页；偶页用上面"拖偶页框"按钮）
+    ttk.Button(manual_btn_frame, text="选择样本页…(奇)",
+               command=lambda: _open_sample_page_for(is_even=False)).grid(
         row=0, column=3, padx=(12, 4)
     )
 
@@ -725,8 +840,8 @@ def run_gui() -> None:
     _on_crop_change()  # 初始化时跑一次对齐默认状态（必须在 manual_widgets 之后）
 
     # 二值化（v2.2.1+：行号 +1 让出给 manual_frame）
-    ttk.Label(root, text="二值化:").grid(row=7, column=0, sticky="e", **pad)
-    bin_frame = ttk.Frame(root)
+    ttk.Label(inner_frame, text="二值化:").grid(row=7, column=0, sticky="e", **pad)
+    bin_frame = ttk.Frame(inner_frame)
     bin_frame.grid(row=7, column=1, sticky="w", **pad)
     ttk.Combobox(
         bin_frame,
@@ -747,7 +862,7 @@ def run_gui() -> None:
     ).grid(row=0, column=2, padx=8)
 
     # v1.8+ dry-run 控件
-    dry_frame = ttk.Frame(root)
+    dry_frame = ttk.Frame(inner_frame)
     dry_frame.grid(row=7, column=2, sticky="w", **pad)
     ttk.Checkbutton(
         dry_frame,
@@ -766,8 +881,8 @@ def run_gui() -> None:
     ttk.Label(dry_frame, text="页", foreground="gray").grid(row=0, column=3)
 
     # 输出格式 + PDF（v2.2.1+：行号 +1）
-    ttk.Label(root, text="输出格式:").grid(row=8, column=0, sticky="e", **pad)
-    fmt_frame = ttk.Frame(root)
+    ttk.Label(inner_frame, text="输出格式:").grid(row=8, column=0, sticky="e", **pad)
+    fmt_frame = ttk.Frame(inner_frame)
     fmt_frame.grid(row=8, column=1, columnspan=2, sticky="ew", **pad)
     ttk.Combobox(
         fmt_frame,
@@ -1045,7 +1160,7 @@ def run_gui() -> None:
     dry_run_var.trace_add("write", _on_dry_run_change)
 
     # 进度条（v2.2.1+：行号 +1 让出给 manual_frame）
-    progress = ttk.Progressbar(root, mode="indeterminate")
+    progress = ttk.Progressbar(inner_frame, mode="indeterminate")
     progress.grid(row=9, column=0, columnspan=3, sticky="ew", padx=8, pady=(12, 4))
 
     # v1.8.1+ cancel event：每次 on_run 新建一个，透传给 pipeline thread
@@ -1115,7 +1230,11 @@ def run_gui() -> None:
                 f"T={manual_top_var.get()},B={manual_bottom_var.get()},"
                 f"I={manual_inner_var.get()},O={manual_outer_var.get()}"
             ) if crop_var.get() == "manual" else None,
-            "manual_mirror_even": manual_mirror_var.get(),
+            "manual_even_padding": (
+                f"T={manual_even_top_var.get()},B={manual_even_bottom_var.get()},"
+                f"I={manual_even_inner_var.get()},O={manual_even_outer_var.get()}"
+            ) if crop_var.get() == "manual" else None,
+            "manual_mirror_even": None,  # v2.3+ 语义废弃，传 None 即可
             "manual_preset": None,
             "manual_save_preset": None,
         }
@@ -1141,12 +1260,20 @@ def run_gui() -> None:
             stop_btn.config(state="disabled")
             log_queue.put(("log", "⏹ 正在停止..."))
 
-    run_btn = ttk.Button(root, text="开始处理", command=on_run)
-    run_btn.grid(row=10, column=0, pady=8, sticky="ew", padx=(8, 4))
+    # v2.3.2+：三按钮统一宽度 18 字符，放一个 Frame 内均分三列
+    # （旧 grid 三列宽度不均 + 中文按钮被挤压）
+    btn_row = ttk.Frame(inner_frame)
+    btn_row.grid(row=10, column=0, columnspan=3, pady=8, sticky="ew", padx=8)
+    btn_row.columnconfigure(0, weight=1)
+    btn_row.columnconfigure(1, weight=1)
+    btn_row.columnconfigure(2, weight=1)
+
+    run_btn = ttk.Button(btn_row, text="开始处理", width=18, command=on_run)
+    run_btn.grid(row=0, column=0, padx=4, pady=4)
 
     # v1.8.1+ 停止按钮：初始 disabled；on_run 时启用；on_stop / 完成时禁用
-    stop_btn = ttk.Button(root, text="停止", command=on_stop, state="disabled")
-    stop_btn.grid(row=10, column=1, pady=8, sticky="ew", padx=4)
+    stop_btn = ttk.Button(btn_row, text="停止", width=18, command=on_stop, state="disabled")
+    stop_btn.grid(row=0, column=1, padx=4, pady=4)
 
     # v1.8+ dry-run：执行后启用"打开预览目录"按钮
     def _open_preview_dir() -> None:
@@ -1169,17 +1296,17 @@ def run_gui() -> None:
             messagebox.showerror("打开失败", str(e))
 
     open_preview_btn = ttk.Button(
-        root, text="打开预览目录", command=_open_preview_dir, state="disabled"
+        btn_row, text="打开预览目录", width=18, command=_open_preview_dir, state="disabled"
     )
-    open_preview_btn.grid(row=10, column=2, pady=8, sticky="ew", padx=(4, 8))
+    open_preview_btn.grid(row=0, column=2, padx=4, pady=4)
 
     # 日志（v2.2.1+：行号 +1）
-    ttk.Label(root, text="日志:").grid(row=11, column=0, sticky="nw", padx=8, pady=(8, 0))
-    log_frame = ttk.Frame(root)
+    ttk.Label(inner_frame, text="日志:").grid(row=11, column=0, sticky="nw", padx=8, pady=(8, 0))
+    log_frame = ttk.Frame(inner_frame)
     log_frame.grid(row=12, column=0, columnspan=3, sticky="nsew", padx=8, pady=(0, 8))
     log_frame.columnconfigure(0, weight=1)
     log_frame.rowconfigure(0, weight=1)
-    root.rowconfigure(12, weight=1)
+    # 日志行不参与外层 row weight（外层是滚动结构，weight=1 无意义）
 
     log_text = tk.Text(log_frame, height=12, wrap="word", state="disabled")
     log_text.grid(row=0, column=0, sticky="nsew")
@@ -1187,6 +1314,44 @@ def run_gui() -> None:
     scroll.grid(row=0, column=1, sticky="ns")
     log_text.configure(yscrollcommand=scroll.set)
     log_text.tag_configure("error", foreground="red")
+
+    # v2.3.2+：PDF 导出成功后弹窗询问是否进行人工裁剪（典型二次处理工作流）
+    def _ask_manual_crop_after_pdf() -> None:
+        """PDF 导出成功后：自动把输出目录设为新的输入路径，询问是否进行人工裁剪。
+
+        若用户点"是"：预填 deskew=开 / split=none / crop=manual，并展开 manual 面板。
+        若用户点"否"：无任何改动。
+        """
+        output_dir_str = output_var.get()
+        if not output_dir_str:
+            return
+        pdf_dir = Path(output_dir_str)
+        pdf_file = None
+        if pdf_dir.is_dir():
+            pdfs = sorted(pdf_dir.glob("*.pdf"))
+            if pdfs:
+                pdf_file = pdfs[0]
+        answer = messagebox.askyesno(
+            "PDF 已导出",
+            f"已导出 PDF：\n{pdf_file or pdf_dir}\n\n"
+            "是否继续进行人工裁剪？\n"
+            "（将自动设置：\n"
+            "  · 输入路径 = 当前输出目录\n"
+            "  · 切分策略 = 不切分\n"
+            "  · 单页裁切 = 手动（拖框）\n"
+            "  · 倾斜校正 = 开启）",
+        )
+        if answer:
+            input_var.set(output_dir_str)
+            split_var.set("none")
+            crop_var.set("manual")
+            deskew_var.set(True)
+            if not manual_expanded_var.get():
+                _toggle_manual_expand()
+            messagebox.showinfo(
+                "已预填",
+                "已自动设置人工裁切参数。\n请点击「开始处理」运行。",
+            )
 
     def poll_queue() -> None:
         try:
@@ -1206,6 +1371,9 @@ def run_gui() -> None:
                         open_preview_btn.config(state="normal")
                     if tag == "error":
                         messagebox.showerror("处理出错", msg)
+                    # v2.3.2+：PDF 导出成功后询问是否人工裁剪（仅 done + pdf + 非 dry-run）
+                    if tag == "done" and pdf_var.get() and not dry_run_var.get():
+                        _ask_manual_crop_after_pdf()
         except queue.Empty:
             pass
         root.after(80, poll_queue)

@@ -24,6 +24,10 @@ PRESETS: dict[str, tuple[float, float]] = {
     "a5": (148.0, 210.0),
     "letter": (215.9, 279.4),  # 8.5 × 11 inch
     "legal": (215.9, 355.6),  # 8.5 × 14 inch
+    # v2.3.3+：Amazon Kindle Paperwhite 6（11 代，2021 年）
+    # 6.8" E Ink Carta 1200 @ 300 ppi → 1648×1232 px = 5.493×4.107 in
+    # = 139.5 × 104.3 mm（display 区域，不含边框）
+    "kpw6": (139.5, 104.3),
 }
 
 #: ``--pdf-page-size`` argparse choices（"keep" / "max" / "first" / 预设 / "custom"）。
@@ -35,6 +39,7 @@ PDF_PAGE_SIZE_CHOICES: tuple[str, ...] = (
     "a5",
     "letter",
     "legal",
+    "kpw6",
     "custom",
 )
 

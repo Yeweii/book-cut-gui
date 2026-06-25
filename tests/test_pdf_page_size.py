@@ -1,7 +1,7 @@
 """v1.7 PDF 页面统一尺寸测试。
 
-覆盖（14 个）：
-- 解析（8）：4 个预设 / max/first 不需解析 / custom 合法 / custom 错格式
+覆盖：
+- 解析：5 个预设（含 v2.3.3+ kpw6） / max/first 不需解析 / custom 合法 / custom 错格式
 - fit（4）：横→竖 / 竖→横 / 正方形 / 同尺寸
 - 实际 PDF（2）：a4 / max mediabox 验证
 """
@@ -47,6 +47,20 @@ def test_t3_parse_letter() -> None:
 def test_t4_parse_legal() -> None:
     """T4：legal → 8.5×14 in @ 96 DPI = (816, 1344) px。"""
     assert parse_page_size_px("legal") == (816, 1344)
+
+
+def test_t4b_parse_kpw6() -> None:
+    """T4b（v2.3.3+）：kpw6 → 139.5×104.3 mm @ 96 DPI = (527, 394) px。
+
+    Amazon Kindle Paperwhite 6（11 代，2021）：
+    6.8" E Ink Carta 1200 @ 300 ppi → 1648×1232 px = 5.493×4.107 in
+    = 139.5 × 104.3 mm（display 区域，不含边框）。
+    验证：139.5/25.4*96 = 527.24, 104.3/25.4*96 = 394.27。
+    """
+    assert parse_page_size_px("kpw6") == (527, 394)
+    # 长宽比 ≈ 4:3 = 1.3377（与 1648/1232 一致）
+    w, h = parse_page_size_px("kpw6")
+    assert abs(w / h - 1648 / 1232) < 0.01, f"aspect ratio mismatch: {w}/{h} vs 1648/1232"
 
 
 def test_t5_parse_custom_mm() -> None:
@@ -245,6 +259,7 @@ def test_t14_max_actual_pdf_mediabox(tmp_path: Path) -> None:
 
 def test_t15_pdf_page_size_choice_in_cli() -> None:
     """T15：--pdf-page-size 在 choices 列表里。"""
-    for c in ("keep", "max", "first", "a4", "a5", "letter", "legal", "custom"):
+    for c in ("keep", "max", "first", "a4", "a5", "letter", "legal", "kpw6", "custom"):
         assert c in PDF_PAGE_SIZE_CHOICES
-    assert len(PRESETS) == 4  # a4, a5, letter, legal
+    # v2.3.3+：5 个 preset（a4, a5, letter, legal, kpw6）
+    assert len(PRESETS) == 5
